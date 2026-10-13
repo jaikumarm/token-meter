@@ -1815,6 +1815,33 @@ class SurfaceContractTests(unittest.TestCase):
             self.assertIn(marker, self.page)
         self.assertNotIn("rows.reduce((sum,item)=>sum+(item.spend||0),0)", self.page)
 
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_a_settings_deep_link_waits_for_a_hidden_card_and_settles(self):
+        page = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "page.html")
+        script = """
+const fs=require('fs');const page=fs.readFileSync(process.argv[1],'utf8');
+function extract(name){let start=page.indexOf(`function ${name}(`);let i=page.indexOf('{',start),depth=0;for(;i<page.length;i++){if(page[i]==='{')depth++;else if(page[i]==='}'&&--depth===0)return page.slice(start,i+1);}}
+let now=0;Date.now=()=>now;const timers=[];const setTimeout=(fn)=>timers.push(fn);const requestAnimationFrame=fn=>fn();
+let scrolls=0,top=1900;
+const card={hidden:true,getClientRects:()=>card.hidden?[]:[1],getBoundingClientRect:()=>({top}),scrollIntoView(){scrolls++;top=100;}};
+const view={classList:{contains:()=>true}};const $=id=>id==='view-settings'?view:card;
+var pendingSettingsScroll=null;
+eval(extract('trySettingsScroll')+extract('scrollToSettingsCard'));
+const out={};
+scrollToSettingsCard('work-insights-settings');out.whileHidden=scrolls;
+card.hidden=false;trySettingsScroll();out.shown=scrolls;           // applyWorkSupport shows the card
+top=640;timers.shift()();out.afterShift=scrolls;                   // a card above filled in and pushed it down
+timers.shift()();out.settled=scrolls;out.pending=pendingSettingsScroll;// no move this time: done
+process.stdout.write(JSON.stringify(out));
+"""
+        out = json.loads(subprocess.run(["node", "-e", script, page], capture_output=True, text=True, check=True).stdout)
+        self.assertEqual((out["whileHidden"], out["shown"], out["afterShift"], out["settled"]), (0, 1, 2, 2))
+        self.assertIsNone(out["pending"])
+        self.assertIn("if(supported&&pendingSettingsScroll)requestAnimationFrame(trySettingsScroll);", self.page)
+        self.assertIn("window.addEventListener(type,()=>{pendingSettingsScroll=null;},{passive:true})", self.page)
+        # Declared before the first route runs: a deep link at startup must not hit the variable's dead zone.
+        self.assertLess(self.page.index("let pendingSettingsScroll=null;"), self.page.index("function applyHashRoute("))
+
     def test_current_session_hints_keep_their_styles(self):
         # A merge once dropped these with an unrelated deleted block; the markup alone does not show it.
         for rule in (".currentSessionHints{display:grid;gap:6px;margin-top:14px}",

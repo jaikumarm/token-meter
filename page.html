@@ -3658,6 +3658,8 @@ const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&
 // Work page state is declared early: the initial hash route can run before later definitions.
 let WORK=null,workRequest=0,workLastLoadedAt=0,workMonths='6',workRuntime='',workProject='';
 let workSupported=null;
+// Declared before the first route runs: a deep link schedules its scroll during startup.
+let pendingSettingsScroll=null;
 let workSessionFilter=null,workFilterRequest=0;
 let WORK_SETTINGS=null,workAreasDraft=null;
 function durationShort(seconds){
@@ -4384,11 +4386,9 @@ if(h==='logs'||legacyGlobal){
  if(h==='settings'||h==='model-pricing'||h==='settings-updates'||h==='settings-appearance'||h==='settings-work-insights'){
   showTab('settings');
   if(LATEST)renderSettings(LATEST.xsession);
-  if(h==='model-pricing')requestAnimationFrame(()=>$('model-pricing-settings').scrollIntoView({block:'start'}));
-  if(h==='settings-updates')requestAnimationFrame(()=>$('update-settings').scrollIntoView({block:'start'}));
-  if(h==='settings-work-insights')requestAnimationFrame(()=>$('work-insights-settings').scrollIntoView({block:'start'}));
+  const card={'model-pricing':'model-pricing-settings','settings-updates':'update-settings','settings-work-insights':'work-insights-settings','settings-appearance':'appearance-settings'}[h];
+  if(card)scrollToSettingsCard(card);
   loadWorkSettings();
-  if(h==='settings-appearance')requestAnimationFrame(()=>$('appearance-settings').scrollIntoView({block:'start'}));
   loadAgentAccess();
   return;
  }
@@ -8477,6 +8477,7 @@ $('w-setup-retry').addEventListener('click',async()=>{
 });
 function renderWorkSettings(payload,{force=false}={}){
  if(!payload)return;
+ applyWorkSupport(payload.settings?.supported);  // known here long before the first full state on a cold start
  WORK_SETTINGS=payload;
  const settings=payload.settings||{},status=payload.status||{};
  const badge=status.reason==='delete_pending'?'Delete pending':({disabled:'Off',setup_needed:'Setup needed',running:'Running',idle:'Up to date',paused:'Paused',throttled:'Waiting',backoff:'Retrying',storage_error:'Error'}[settings.enabled?status.state:'disabled']||'On');
@@ -11167,10 +11168,30 @@ function goToLatestSession(){followLatestSession();}
 let statePollBusy=false;
 const LIVE_STATE_POLL_MS=1000;
 const SELECTED_SESSION_POLL_MS=2000;
+// Deep links into Settings: a card can still be hidden (Work insights wait for the server to say they are
+// supported) or move down as cards above it fill in, so the scroll waits for it and settles once.
+function scrollToSettingsCard(id){
+ pendingSettingsScroll={id,until:Date.now()+60000,top:null};
+ requestAnimationFrame(trySettingsScroll);
+}
+function trySettingsScroll(){
+ const pending=pendingSettingsScroll;
+ if(!pending||Date.now()>pending.until||!$('view-settings').classList.contains('on')){pendingSettingsScroll=null;return;}
+ const card=$(pending.id);
+ if(!card||card.hidden||!card.getClientRects().length)return; // shown later: applyWorkSupport retries
+ const top=card.getBoundingClientRect().top;
+ if(pending.top!==null&&Math.abs(top-pending.top)<4){pendingSettingsScroll=null;return;} // settled
+ card.scrollIntoView({block:'start'});
+ pending.top=card.getBoundingClientRect().top;
+ setTimeout(trySettingsScroll,600);
+}
+// The reader takes over as soon as they scroll themselves.
+['wheel','touchstart','keydown'].forEach(type=>window.addEventListener(type,()=>{pendingSettingsScroll=null;},{passive:true}));
 function applyWorkSupport(supported){
  if(typeof supported!=='boolean'||supported===workSupported)return;
  workSupported=supported;
  $('tab-work').hidden=!supported;$('work-insights-settings').hidden=!supported;
+ if(supported&&pendingSettingsScroll)requestAnimationFrame(trySettingsScroll);
  if(!supported&&/^#?(work|sessions-all\?work=)/.test(location.hash.replace(/^#/,'')))location.hash='sessions';
 }
 function applyLiveState(state){

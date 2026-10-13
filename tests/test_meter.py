@@ -10054,7 +10054,8 @@ console.log(JSON.stringify(groups.map(group => colors.get(group.key))));
         self.assertNotIn("Local trace source", self.page)
         self.assertNotIn("function renderCursorSourceStatus", self.page)
         self.assertIn("h==='settings-budgets'||h==='budgets'", self.page)
-        self.assertIn("$('model-pricing-settings').scrollIntoView", self.page)
+        self.assertIn("'model-pricing':'model-pricing-settings'", self.page)
+        self.assertIn("if(card)scrollToSettingsCard(card);", self.page)
 
     def test_model_pricing_groups_rows_by_provider_tabs_in_a_bounded_scroll(self):
         pricing = self.page.split("id=model-pricing-settings", 1)[1].split(
@@ -10929,7 +10930,7 @@ console.log(JSON.stringify({
         self.assertIn(".softwareUpdateActions .tbtn:disabled{opacity:.45;cursor:not-allowed}", self.page)
         self.assertIn("body.classList.toggle('updateReady',showNotice)", self.page)
         self.assertNotIn("setInterval(()=>postSoftwareUpdate('/updates/install'", self.page)
-        self.assertIn("if(h==='settings-updates')requestAnimationFrame(()=>$('update-settings').scrollIntoView({block:'start'}))", self.page)
+        self.assertIn("'settings-updates':'update-settings'", self.page)
         settings = self.page.split("<div class=view id=view-settings>", 1)[1].split(
             "</div>\n</div>\n<dialog class=commandPalette", 1
         )[0]
