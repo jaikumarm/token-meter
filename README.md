@@ -136,8 +136,9 @@ Work page; turning Work insights off stops the managed Ollama, and uninstalling
 Token Meter removes it.
 
 Labeling is off by default. When on, it runs in the background at an automatic
-pace: as fast as the model answers while your Mac is quiet, and about 5 labels a
-minute while you are using it (or pick a fixed pace). It pauses on battery, and can be paused from the page,
+pace: up to 60 model calls a minute while the CPU is mostly idle and your Mac is
+plugged in, and 5 a minute otherwise (or pick a fixed pace). Long fast stretches
+keep the GPU busy, so the fans may run. It pauses on battery, and can be paused from the page,
 Settings, or the menu bar. Labels are estimates; low-confidence answers show as
 Unclear.
 

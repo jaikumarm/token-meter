@@ -264,6 +264,14 @@ class SettingsValidationTests(unittest.TestCase):
         service.load_probe = lambda: 0.2
         service._throttle_reason(values)
         self.assertEqual(service.last_load, 0.2)  # each busy check also sets the automatic pace
+        # On battery with the battery pause off, labeling runs but automatic stays gentle.
+        values["rate_per_minute"], values["pause_on_battery"] = "auto", False
+        service.power_probe = lambda: "battery"
+        self.assertNotEqual(service._throttle_reason(values), "on_battery")
+        self.assertEqual(service._pace(values), W.AUTO_GENTLE_RATE)
+        service.power_probe = lambda: "ac"
+        service._throttle_reason(values)
+        self.assertEqual(service._pace(values), W.AUTO_FAST_RATE)
         self.assertGreater(W.AUTO_FAST_RATE, W.AUTO_GENTLE_RATE)
         self.assertLess(W.AUTO_QUIET_LIMIT, W.CPU_BUSY_LIMIT)
 
@@ -1660,6 +1668,8 @@ class AppContractTests(unittest.TestCase):
                   encoding="utf-8") as handle:
             page = handle.read()
         self.assertIn("<option value=auto>Automatic (default)</option>", page)
+        self.assertIn("id=work-rate aria-describedby=work-rate-hint>", page)
+        self.assertIn("<small id=work-rate-hint>Automatic: up to 60 a minute while the CPU is mostly idle", page)
         self.assertNotIn("(default)</option><option value=10>", page)  # 5 is no longer the default
         self.assertIn("rate_per_minute:event.target.value==='auto'?'auto':Number(event.target.value)", page)
 

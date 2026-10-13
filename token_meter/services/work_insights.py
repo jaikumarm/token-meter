@@ -988,6 +988,7 @@ class WorkInsightsService:
         self.monotonic = monotonic
         self.load_probe = load_probe or CpuBusyProbe()
         self.last_load = None
+        self.on_battery = False
         self.power_probe = power_probe or (lambda: None)
         self.memory_probe = memory_probe or _default_memory_probe
         self.low_memory_strikes = 0
@@ -1342,11 +1343,12 @@ class WorkInsightsService:
         return "low_memory" if available < headroom + (0 if loaded else MODEL_MEMORY_BYTES) else ""
 
     def _pace(self, settings):
-        """Model calls a minute: the chosen cap, or for automatic, fast while the last busy check was quiet."""
+        """Model calls a minute: the chosen cap, or for automatic, fast while the last busy check found the CPU
+        quiet and the Mac on power (labeling may run on battery when its battery pause is off)."""
         rate = settings["rate_per_minute"]
         if rate != "auto":
             return rate
-        quiet = self.last_load is not None and self.last_load <= AUTO_QUIET_LIMIT
+        quiet = self.last_load is not None and self.last_load <= AUTO_QUIET_LIMIT and not self.on_battery
         return AUTO_FAST_RATE if quiet else AUTO_GENTLE_RATE
 
     def _throttle_reason(self, settings):
@@ -1356,7 +1358,8 @@ class WorkInsightsService:
         load = self.last_load = self.load_probe()
         if load is not None and load > CPU_BUSY_LIMIT:
             return "system_busy"
-        if settings["pause_on_battery"] and self.power_probe() == "battery":
+        self.on_battery = self.power_probe() == "battery"
+        if settings["pause_on_battery"] and self.on_battery:
             return "on_battery"
         if self.baseline and len(self.latencies) >= LATENCY_WINDOW:
             median = sorted(self.latencies)[len(self.latencies) // 2]

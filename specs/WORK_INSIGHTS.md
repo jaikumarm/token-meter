@@ -175,8 +175,9 @@ queue). Only the last is real backlog; labeling progress counts only
 labelable sessions.
 
 The worker paces model calls. The default, **Automatic**, allows 60 a minute
-while the last busy check found 35% or less of CPU time busy and 5 a minute
-otherwise (or when the reading is unknown); a fixed pace of 5-60 is a cap. A 5
+while the last busy check found 35% or less of CPU time busy and the Mac on
+power, and 5 a minute otherwise (or when the reading is unknown); GPU work does
+not count as busy; a fixed pace of 5-60 is a cap. A 5
 saved before the pace version was the old default and becomes Automatic. It
 pauses on battery,
 waits when more than 75% of all CPU time is busy (measured from the CPU tick
