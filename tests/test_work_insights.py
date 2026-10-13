@@ -1867,6 +1867,7 @@ const cov=(labeled)=>({sessions:120,no_text_sessions:10,outside_sessions:10,labe
 process.stdout.write(JSON.stringify({
  none:workProgressNote({enabled:true},{pending:3863},cov(0),true),
  partial:workProgressNote({enabled:true},{pending:1},cov(81),true),
+ relabel:workProgressNote({enabled:true},{pending:40},cov(100),true),
  done:workProgressNote({enabled:true},{pending:0},cov(100),true),
  off:workProgressNote({enabled:false},{pending:5},cov(0),true),
  loading:workProgressNote({enabled:true},{pending:5},cov(0),false),
@@ -1875,10 +1876,12 @@ process.stdout.write(JSON.stringify({
         out = json.loads(subprocess.run(["node", "-e", script, page_path], capture_output=True, text=True,
                                         check=True).stdout)
         self.assertEqual(out["none"][0], "Results appear as labeling finishes")
-        self.assertIn("3,863 requests are left to label.", out["none"][1])
         self.assertEqual(out["partial"][0], "Results are still filling in")
         self.assertIn("81% of labelable sessions", out["partial"][1])
-        self.assertIn("1 request is left to label.", out["partial"][1])
+        # Fully labeled but relabeling: not "100% ... partial".
+        self.assertEqual(out["relabel"][0], "Results are updating")
+        self.assertNotIn("%", out["relabel"][1])
+        self.assertNotIn("left to label", out["none"][1] + out["partial"][1])  # the status card counts that
         self.assertIsNone(out["done"])
         self.assertIsNone(out["off"])  # the status card already says it is off
         self.assertIsNone(out["loading"])
@@ -1890,28 +1893,57 @@ process.stdout.write(JSON.stringify({
         script = """
 const fs=require('fs');const page=fs.readFileSync(process.argv[1],'utf8');
 function extract(name){let start=page.indexOf(`function ${name}(`);let i=page.indexOf('{',start),depth=0;for(;i<page.length;i++){if(page[i]==='{')depth++;else if(page[i]==='}'&&--depth===0)return page.slice(start,i+1);}}
-const nodes={'work-model':{value:'token-meter-gemma'},'work-url':{value:'http://127.0.0.1:11434'},'work-save':{disabled:false}};const $=id=>nodes[id];
+const nodes={'work-model':{value:'token-meter-gemma'},'work-url':{value:'http://127.0.0.1:11434'},'work-save':{disabled:false},'work-settings-status':{textContent:'Saved locally.'}};const $=id=>nodes[id];
 var WORK_SETTINGS={settings:{model:'token-meter-gemma',ollama_url:'http://127.0.0.1:11434',areas:[{name:'A',description:'a',extra:1}]}};
 var workAreasDraft=[{name:'A',description:'a'}];
 eval(['workSettingsDraft','workSettingsDirty','updateWorkSaveState'].map(extract).join('\\n'));
 const out=[];const check=()=>{updateWorkSaveState();out.push(nodes['work-save'].disabled);};
 check();
-nodes['work-model'].value='other';check();
+nodes['work-model'].value='other';check();const unsaved=nodes['work-settings-status'].textContent;
 nodes['work-model'].value='token-meter-gemma ';check();
-workAreasDraft[0].description='b';check();
+const resaved=nodes['work-settings-status'].textContent;workAreasDraft[0].description='b';check();workAreasDraft[0].description='a  ';check();
 workAreasDraft[0].description='a';workAreasDraft.push({name:'',description:''});check();
 workAreasDraft.pop();check();
 WORK_SETTINGS=null;check();
-process.stdout.write(JSON.stringify(out));
+process.stdout.write(JSON.stringify({out,unsaved,resaved}));
 """
-        out = json.loads(subprocess.run(["node", "-e", script, page_path], capture_output=True, text=True,
+        got = json.loads(subprocess.run(["node", "-e", script, page_path], capture_output=True, text=True,
                                         check=True).stdout)
-        # disabled when saved; live after a change; trailing spaces are not a change; areas count; null = disabled
-        self.assertEqual(out, [True, False, True, False, False, True, True])
+        # disabled when saved; live after a change; spaces are not a change; areas count; null = disabled
+        self.assertEqual(got["out"], [True, False, True, False, True, False, True, True])
+        self.assertEqual((got["unsaved"], got["resaved"]), ("Unsaved changes", "Saved locally."))
         with open(page_path, encoding="utf-8") as handle:
             page = handle.read()
         self.assertIn("<button class=tbtn id=work-save type=button disabled>Save changes</button>", page)
         self.assertIn('<div class="workActionGroup workSettingsManage">', page)
+
+    def test_a_toggle_save_keeps_unsaved_model_and_area_edits(self):
+        page_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "page.html")
+        script = """
+const fs=require('fs');const page=fs.readFileSync(process.argv[1],'utf8');
+function extract(name){let start=page.indexOf(`async function ${name}(`);if(start<0)start=page.indexOf(`function ${name}(`);let i=page.indexOf('{',start),depth=0;for(;i<page.length;i++){if(page[i]==='{')depth++;else if(page[i]==='}'&&--depth===0)return page.slice(start,i+1);}}
+const nodes={'work-model':{value:'m'},'work-url':{value:'u'},'work-save':{disabled:true},'work-settings-status':{textContent:'Saved locally.'}};const $=id=>nodes[id];
+const saved={model:'m',ollama_url:'u',areas:[{name:'A',description:'a'}],pause_on_battery:true};
+var WORK_SETTINGS={settings:saved},workAreasDraft=[{name:'A',description:'a'}],workLastLoadedAt=1;
+function renderWorkAreas(){updateWorkSaveState();}
+function renderWorkSettings(payload){WORK_SETTINGS=payload;nodes['work-model'].value=payload.settings.model;nodes['work-url'].value=payload.settings.ollama_url;workAreasDraft=payload.settings.areas.map(a=>({...a}));renderWorkAreas();}
+const sent=[];async function postWorkAction(path,payload){sent.push(payload);return {work_insights:{...saved,...payload},status:{}};}
+eval(['workSettingsDraft','workSettingsDirty','updateWorkSaveState','saveWorkSettings'].map(extract).join('\\n'));
+(async()=>{
+ nodes['work-model'].value='new-model';workAreasDraft[0].description='edited';updateWorkSaveState();
+ await saveWorkSettings({pause_on_battery:false});
+ const afterToggle={model:nodes['work-model'].value,area:workAreasDraft[0].description,save:nodes['work-save'].disabled,line:nodes['work-settings-status'].textContent};
+ await saveWorkSettings(workSettingsDraft());
+ process.stdout.write(JSON.stringify({afterToggle,sent,after:{model:nodes['work-model'].value,save:nodes['work-save'].disabled,line:nodes['work-settings-status'].textContent}}));
+})();
+"""
+        out = json.loads(subprocess.run(["node", "-e", script, page_path], capture_output=True, text=True,
+                                        check=True).stdout)
+        self.assertEqual(out["afterToggle"], {"model": "new-model", "area": "edited", "save": False,
+                                              "line": "Saved. Other changes are not saved yet."})
+        self.assertEqual(out["sent"][0], {"pause_on_battery": False})  # the toggle alone
+        self.assertEqual(out["sent"][1]["model"], "new-model")
+        self.assertEqual(out["after"], {"model": "new-model", "save": True, "line": "Saved locally."})
 
     def test_effort_by_model_renders_one_model_with_verdicts_and_thin_cells(self):
         page = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "page.html")

@@ -3241,7 +3241,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     <button class=tbtn id=w-open-settings type=button>Settings</button>
 	   </div>
 	  </section>
-  <section class="card emptyState workProgressNote" id=w-progress-note aria-live=polite hidden><strong id=w-progress-title></strong><p id=w-progress-detail></p></section>
+  <section class="card emptyState workProgressNote" id=w-progress-note hidden><strong id=w-progress-title></strong><p id=w-progress-detail></p></section>
   <section class="card workSizing" id=w-module-sizing>
    <div class=workCardHead><div><h2 class=fieldtip tabindex=0 aria-description="Spend by request complexity, split by model tier and reasoning effort. Savings are estimates." data-tip="Spend by request complexity, split by model tier and reasoning effort. Savings are estimates.">Right-sizing</h2><div class=subline>Where you could spend less · estimates</div></div></div>
    <div class=workSuggestCards id=w-suggest-cards></div>
@@ -8158,10 +8158,11 @@ function workProgressNote(settings,status,coverage,hasInsights){
  const labelable=Math.max(0,(coverage.sessions||0)-(coverage.no_text_sessions||0)-(coverage.outside_sessions||0));
  const labeled=coverage.labeled_sessions||0;
  if(!settings.enabled||!hasInsights||(labeled>=labelable&&!status.pending))return null;
- const left=status.pending?` ${status.pending.toLocaleString()} request${status.pending===1?' is':'s are'} left to label.`:'';
- if(!labeled)return['Results appear as labeling finishes',`No session in this period is labeled yet, so the charts below are empty for now. They fill in as the local model labels your requests.${left}`];
- const share=labelable?Math.floor(100*labeled/labelable):100;
- return['Results are still filling in',`${share}% of labelable sessions in this period are labeled, so the charts below are partial and update as labeling continues. Sessions not labeled yet show in gray as “Not labeled yet”.${left}`];
+ // The status card above already counts what is left; this says what that means for the charts.
+ if(!labeled)return['Results appear as labeling finishes','No session in this period is labeled yet, so the charts below are empty for now. They fill in as requests are labeled.'];
+ if(labeled>=labelable)return['Results are updating','Every session in this period has labels. Some are being labeled again, so numbers below may shift a little as that finishes.'];
+ const share=Math.floor(100*labeled/labelable);
+ return['Results are still filling in',`${share}% of labelable sessions in this period are labeled, so the charts below are partial and update as labeling continues. Sessions not labeled yet show in gray as “Not labeled yet”.`];
 }
 function renderWorkStatus(payload){
  const status=payload?.status||{},settings=payload?.settings||{},coverage=payload?.insights?.coverage||{};
@@ -8621,7 +8622,7 @@ function renderWorkSettings(payload,{force=false}={}){
  workAreasDraft=(settings.areas||[]).map(area=>({...area}));renderWorkAreas();
 }
 function workSettingsDraft(){
- return {model:$('work-model').value.trim(),ollama_url:$('work-url').value.trim(),areas:(workAreasDraft||[]).map(area=>({name:area.name.trim(),description:area.description.trim()}))};
+ return {model:$('work-model').value.trim(),ollama_url:$('work-url').value.trim(),areas:(workAreasDraft||[]).map(area=>({name:area.name.split(/\s+/).join(' ').trim(),description:area.description.split(/\s+/).join(' ').trim()}))};
 }
 // Save covers the model, address, and areas; it is live only when one of them differs from what is saved.
 function workSettingsDirty(){
@@ -8629,7 +8630,12 @@ function workSettingsDirty(){
  const savedAreas=(saved.areas||[]).map(area=>({name:area.name,description:area.description}));
  return draft.model!==(saved.model||'')||draft.ollama_url!==(saved.ollama_url||'')||JSON.stringify(draft.areas)!==JSON.stringify(savedAreas);
 }
-function updateWorkSaveState(){$('work-save').disabled=!WORK_SETTINGS||!workSettingsDirty();}
+function updateWorkSaveState(){
+ const dirty=Boolean(WORK_SETTINGS)&&workSettingsDirty(),line=$('work-settings-status');
+ $('work-save').disabled=!dirty;
+ if(dirty&&line.textContent==='Saved locally.')line.textContent='Unsaved changes';
+ else if(!dirty&&line.textContent==='Unsaved changes')line.textContent='Saved locally.';
+}
 function renderWorkAreas(){
  const limits=WORK_SETTINGS?.settings?.limits||{min_areas:2,max_areas:8,name:40,description:200},areas=workAreasDraft||[];
  $('work-areas').innerHTML=areas.map((area,index)=>`<div class=workAreaRow><i class=workSwatch style="--swatch:${index<8?`var(--w${index+1})`:'var(--w-unclear)'}"></i><input data-area-index=${index} data-area-field=name value="${esc(area.name)}" maxlength=${limits.name} aria-label="Area ${index+1} name"><input data-area-index=${index} data-area-field=description value="${esc(area.description)}" maxlength=${limits.description} aria-label="Area ${index+1} description"><button class="tbtn clearFilters" type=button data-area-remove=${index} ${areas.length<=limits.min_areas?'disabled':''} aria-label="Remove area ${index+1}">Remove</button></div>`).join('');
@@ -8641,11 +8647,14 @@ async function loadWorkSettings(){
  try{const response=await fetch('/work-insights/status',{cache:'no-store'});const payload=await response.json();if(payload.ok)renderWorkSettings(payload);}catch(error){}
 }
 async function saveWorkSettings(payload,message){
+ // A toggle saves at once; keep unsaved model, address, and area edits that it does not include.
+ const kept=!('model' in payload)&&!('areas' in payload)&&!payload.reset_areas&&workSettingsDirty()?{draft:workSettingsDraft(),areas:workAreasDraft}:null;
  $('work-settings-status').textContent='Saving…';
  try{
   const result=await postWorkAction('/settings/work-insights',payload);
   renderWorkSettings({settings:result.work_insights,status:result.status},{force:true});
-  $('work-settings-status').textContent=message||'Saved locally.';
+  if(kept){$('work-model').value=kept.draft.model;$('work-url').value=kept.draft.ollama_url;workAreasDraft=kept.areas;renderWorkAreas();}
+  $('work-settings-status').textContent=message||(kept?'Saved. Other changes are not saved yet.':'Saved locally.');
   workLastLoadedAt=0;
  }catch(error){$('work-settings-status').textContent=error.message;}
 }
