@@ -46,7 +46,9 @@ MEMORY_HEADROOM_SHARE = 0.10
 LOW_MEMORY_MAX_WAIT_S = 15 * 60
 PRESSURE_CRITICAL = 4
 STORAGE_RETRY_S = 300
-LOAD_PER_CPU_LIMIT = 0.75
+CPU_BUSY_LIMIT = 0.75  # share of all cores busy; the load-average fallback compares load per core
+CPU_SAMPLE_S = 0.5
+CPU_WINDOW_MAX_S = 60.0
 LATENCY_DRIFT_FACTOR = 3.0
 LATENCY_WINDOW = 10
 ACTIVE_WINDOW_S = 600
@@ -966,7 +968,7 @@ class WorkInsightsService:
         self.client_factory = client_factory
         self.clock = clock
         self.monotonic = monotonic
-        self.load_probe = load_probe or _default_load_probe
+        self.load_probe = load_probe or CpuBusyProbe()
         self.power_probe = power_probe or (lambda: None)
         self.memory_probe = memory_probe or _default_memory_probe
         self.low_memory_strikes = 0
@@ -1102,6 +1104,9 @@ class WorkInsightsService:
             return 0
         tags = question_tags(settings)
         active = bool(newest and newest >= now - ACTIVE_WINDOW_S)
+        # A live session's newest request is still being worked on: its kind of work and complexity wait
+        # until the next request starts or the session goes quiet, so the classifier sees what it led to.
+        in_progress = max((i for i, text in enumerate(prepared) if text), default=None) if active else None
         items = []
         retry_count, retry_at = 0, None
         earlier = ""
@@ -1127,6 +1132,11 @@ class WorkInsightsService:
                 retry_count += 1
                 retry_at = min(waiting) if retry_at is None else min(retry_at, *waiting)
             wanted = tuple(q for q in questions if self._needs(turn_key, q, tags, now))
+            if ordinal == in_progress and any(q in REQUEST_QUESTIONS for q in wanted):
+                wanted = tuple(q for q in wanted if q not in REQUEST_QUESTIONS)
+                quiet_at = newest + ACTIVE_WINDOW_S + 1
+                retry_count += 1
+                retry_at = quiet_at if retry_at is None else min(retry_at, quiet_at)
             if not wanted:
                 continue
             if "work_type" in wanted and "area" not in wanted:
@@ -1305,7 +1315,7 @@ class WorkInsightsService:
         if memory:
             return memory
         load = self.load_probe()
-        if load is not None and load > LOAD_PER_CPU_LIMIT:
+        if load is not None and load > CPU_BUSY_LIMIT:
             return "system_busy"
         if settings["pause_on_battery"] and self.power_probe() == "battery":
             return "on_battery"
@@ -1938,8 +1948,69 @@ def _default_memory_probe():
     return available, total, pressure
 
 
-def _default_load_probe():
+def _load_per_cpu():
     try:
         return os.getloadavg()[0] / max(1, os.cpu_count() or 1)
     except (AttributeError, OSError):
         return None
+
+
+_mach = None  # (libSystem, host port), opened once per process
+
+
+def _cpu_ticks():
+    """Cumulative (busy, total) CPU ticks across all cores, or None where the platform has no counter."""
+    global _mach
+    if sys.platform == "darwin":
+        import ctypes
+        import ctypes.util
+        try:
+            if _mach is None:
+                lib = ctypes.CDLL(ctypes.util.find_library("System"))
+                lib.mach_host_self.restype = ctypes.c_uint
+                _mach = (lib, lib.mach_host_self())
+            lib, host = _mach
+            info, count = (ctypes.c_uint * 4)(), ctypes.c_uint(4)
+            if lib.host_statistics(host, 3, info, ctypes.byref(count)) != 0:  # HOST_CPU_LOAD_INFO
+                return None
+        except (OSError, AttributeError, TypeError):
+            return None
+        user, system, idle, nice = info
+        return user + system + nice, user + system + idle + nice
+    try:
+        with open("/proc/stat", encoding="ascii") as handle:
+            fields = [int(value) for value in handle.readline().split()[1:]]
+    except (OSError, ValueError):
+        return None
+    if len(fields) < 4:
+        return None
+    idle = fields[3] + (fields[4] if len(fields) > 4 else 0)  # idle + iowait
+    return sum(fields[:8]) - idle, sum(fields[:8])
+
+
+class CpuBusyProbe:
+    """Share of CPU time busy across all cores, measured from tick counters.
+
+    The load average counts waiting threads, so a Mac with many idle app threads can read far above its
+    core count while most cores are free. Falls back to load per core where there is no tick counter.
+    """
+
+    def __init__(self, ticks=_cpu_ticks, sleep=time.sleep, monotonic=time.monotonic, fallback=_load_per_cpu):
+        self.ticks, self.sleep, self.monotonic, self.fallback = ticks, sleep, monotonic, fallback
+        self.last = None
+
+    def __call__(self):
+        sample, now = self.ticks(), self.monotonic()
+        if sample is None:
+            return self.fallback()
+        if self.last is None or not 0 < now - self.last[0] <= CPU_WINDOW_MAX_S:
+            # No recent sample to compare with: measure a short window now.
+            self.sleep(CPU_SAMPLE_S)
+            self.last, sample, now = (now, sample), self.ticks(), self.monotonic()
+            if sample is None:
+                return self.fallback()
+        (busy0, total0), (busy1, total1) = self.last[1], sample
+        self.last = (now, sample)
+        if total1 <= total0:
+            return None
+        return max(0.0, min(1.0, (busy1 - busy0) / (total1 - total0)))

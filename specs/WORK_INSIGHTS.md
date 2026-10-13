@@ -175,8 +175,14 @@ queue). Only the last is real backlog; labeling progress counts only
 labelable sessions.
 
 The worker paces model calls (default 5 a minute; 5-60), pauses on battery,
-waits when load exceeds 0.75 per CPU or the model slows 3x, and backs off when
-Ollama is unreachable. A memory guard, checked before every model call, keeps
+waits when more than 75% of all CPU time is busy (measured from the CPU tick
+counters since the last check; the load average counts waiting threads and
+reads high on an idle Mac with many apps open, so it is only a fallback where
+there is no counter) or the model slows 3x, and backs off when Ollama is
+unreachable. In a live session the newest request's kind of work, area, and
+complexity wait until the next request starts or the session is quiet for
+ten minutes, so the label sees what the request led to; its pushback check
+runs at once. A memory guard, checked before every model call, keeps
 labeling from adding to memory pressure: the model is loaded only when free
 memory covers it (6 GB) plus a headroom of 2 GB or a tenth of the Mac's
 memory, whichever is larger, and a loaded model is unloaded, and labeling

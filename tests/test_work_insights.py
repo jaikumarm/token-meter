@@ -834,7 +834,7 @@ class ServiceTests(unittest.TestCase):
     def test_item_failures_retry_then_become_terminal_unclear(self):
         service, _, clock = make_service(self.tmp.name, {"areas": list(W.DEFAULT_AREAS)[:2]})
         for attempt in range(W.MAX_ITEM_ATTEMPTS):
-            service.observe("s1", [{"ts": clock.now, "text": "hello", "model": "m"}])
+            service.observe("s1", [{"ts": clock.now - W.ACTIVE_WINDOW_S - 1, "text": "hello", "model": "m"}])
             FakeClient.script = [model_response("Sure")] * 3
             service.pacer.tokens = 1.0
             service.pacer.last = -10
@@ -843,7 +843,8 @@ class ServiceTests(unittest.TestCase):
         entry = service.snapshot()[service.session_key("s1")]
         self.assertEqual(entry["work_type"], "unclear")
         self.assertEqual(entry["area"], "Unclear")
-        self.assertEqual(service.observe("s1", [{"ts": clock.now, "text": "hello", "model": "m"}]), 0)
+        self.assertEqual(service.observe("s1", [{"ts": clock.now - W.ACTIVE_WINDOW_S - 1, "text": "hello",
+                                                 "model": "m"}]), 0)
 
     def test_manual_pause_unloads_and_stops_work(self):
         service, values, clock = make_service(self.tmp.name)
@@ -941,7 +942,8 @@ class ServiceTests(unittest.TestCase):
             service.observe("live", [{"ts": clock.now - 10 + i, "text": f"please do live task {i}", "model": "m"} for i in range(2)])
         with service.ledger._connect() as connection:
             rows = dict(connection.execute("SELECT session_key, pending FROM work_backlog").fetchall())
-        self.assertEqual(rows, {service.session_key("old"): 2})
+        # The live session's newest request waits for the session to go quiet.
+        self.assertEqual(rows, {service.session_key("old"): 2, service.session_key("live"): 1})
 
     def test_backlog_rows_that_yield_nothing_are_dropped_after_refill(self):
         service, values, clock = make_service(self.tmp.name, refill=lambda keys: None)
@@ -2476,7 +2478,7 @@ class OpenerPositionAndWindowTests(unittest.TestCase):
 
     def test_past_horizon_opener_move_keeps_the_labels_it_cannot_replace(self):
         service, clock = self.service({"backfill_days": 30})
-        clock.now = 1_799_999_100.0
+        clock.now = 1_799_999_000.0 + W.ACTIVE_WINDOW_S + 100  # quiet, so its only request is labeled now
         service.observe("s1", turns("hi"))
         drain(service)
         self.assertEqual(service.snapshot()[service.session_key("s1")]["work_type"], "ops")
@@ -2899,6 +2901,61 @@ class ReviewFixTests(unittest.TestCase):
         service.ledger.record_label(other, "area", service.session_key("s2"), "Non-code", 0.9, "p2:0000", "d", clock.now)
         service.labels_version += 1
         self.assertNotIn("area", service.snapshot().get(service.session_key("s2"), {}))
+
+    def test_busy_check_reads_cpu_time_not_the_load_average(self):
+        clock = Clock(100.0)
+        samples = iter([(0, 0), (30, 100), (60, 200), (160, 300), (170, 400), None])
+        slept = []
+
+        def sleep(seconds):
+            slept.append(seconds)
+            clock.now += seconds
+
+        probe = W.CpuBusyProbe(ticks=lambda: next(samples), sleep=sleep, monotonic=clock, fallback=lambda: 9.9)
+        self.assertAlmostEqual(probe(), 0.30)  # first call measures a short window
+        self.assertEqual(slept, [W.CPU_SAMPLE_S])
+        clock.now += 5
+        self.assertAlmostEqual(probe(), 0.30)  # then the time since the last call
+        clock.now += W.CPU_WINDOW_MAX_S + 1
+        self.assertAlmostEqual(probe(), 0.10)  # a stale sample is replaced by a fresh window
+        self.assertEqual(len(slept), 2)
+        self.assertEqual(probe(), 9.9)  # no tick counter: load per core
+        if sys.platform == "darwin":
+            busy, total = W._cpu_ticks()
+            self.assertTrue(0 <= busy <= total)
+        # Many idle threads (load 1.8 per core) with most cores free is not busy.
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        service, _values, _clock = make_service(tmp.name, load_probe=lambda: 0.34)
+        self.assertNotEqual(service._throttle_reason(service.settings_provider()), "system_busy")
+
+    def test_a_live_sessions_newest_request_is_labeled_once_its_work_is_done(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        service, values, clock = make_service(tmp.name)
+        live = [dict(t, ts=clock.now - 60 + i) for i, t in enumerate(turns("Fix the chart axis labels please",
+                                                                             "What about the legend colors too"))]
+        service.observe("s", live)
+        asked = {i.turn_key: set(i.questions) for i in service.queue}
+        first, second = service._turn_key("s", 0), service._turn_key("s", 1)
+        self.assertTrue(set(W.REQUEST_QUESTIONS) <= asked[first])
+        self.assertEqual(asked[second], {"correction"})  # pushback is about the typed reply, known now
+        key = service.session_key("s")
+        self.assertEqual(service.ledger.next_backlog(5, clock.now), [])
+        self.assertEqual(service.ledger.next_backlog(5, clock.now - 60 + 1 + W.ACTIVE_WINDOW_S + 1), [key])
+        # A newer request releases it.
+        service.observe("s", live + [dict(turns("Now update the tests for it")[0], ts=clock.now)])
+        asked = {i.turn_key: set(i.questions) for i in service.queue}
+        self.assertTrue(set(W.REQUEST_QUESTIONS) <= asked[second])
+        # So does the session going quiet.
+        other = tempfile.TemporaryDirectory()
+        self.addCleanup(other.cleanup)
+        quiet, _values, q_clock = make_service(other.name)
+        quiet.observe("s", live)
+        q_clock.now += W.ACTIVE_WINDOW_S + 5
+        quiet.observe("s", live)
+        asked = {i.turn_key: set(i.questions) for i in quiet.queue}
+        self.assertTrue(set(W.REQUEST_QUESTIONS) <= asked[quiet._turn_key("s", 1)])
 
     def test_never_labeled_work_goes_before_relabels(self):
         tmp = tempfile.TemporaryDirectory()
