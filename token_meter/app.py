@@ -145,6 +145,8 @@ from token_meter.models.catalog import (
     BUILTIN_MODEL_PRICE_HISTORY as _CANONICAL_BUILTIN_MODEL_PRICE_HISTORY,
     BUILTIN_PRICE_REVIEWED_ON,
     BUILTIN_PRICE_SOURCES,
+    CLAUDE_HAIKU_55_LONG_CONTEXT_MULTIPLIER,
+    CLAUDE_HAIKU_55_LONG_CONTEXT_TOKENS,
     CURSOR_VARIANT_MODEL_IDS,
     CURSOR_PRICE,
     DEFAULT_MODELS as _DEFAULT_MODELS,
@@ -3725,7 +3727,7 @@ _CLAUDE_INFERENCE_GEO_RULES = frozenset((
     "claude-fable-5", "claude-fable-5-1",
     "claude-opus-5-5", "claude-opus-5", "claude-opus-4-8", "claude-opus-4-7",
     "claude-opus-4-6", "claude-sonnet-5-5", "claude-sonnet-5",
-    "claude-sonnet-4-6",
+    "claude-sonnet-4-6", "claude-haiku-5-5",
 ))
 
 
@@ -3777,6 +3779,17 @@ def cost_of(u, model, provider="claude", variant=None, at=None):
                 output_rate *= 2.0
                 cache_read_rate *= 2.0
                 cache_write_5m_rate *= 2.0
+        if quote.matched_rule == "claude-haiku-5-5":
+            prompt_tokens = (
+                usage.get("input_tokens", 0)
+                + usage.get("cache_creation_input_tokens", 0)
+                + usage.get("cache_read_input_tokens", 0)
+            )
+            if prompt_tokens > CLAUDE_HAIKU_55_LONG_CONTEXT_TOKENS:
+                input_rate *= CLAUDE_HAIKU_55_LONG_CONTEXT_MULTIPLIER
+                output_rate *= CLAUDE_HAIKU_55_LONG_CONTEXT_MULTIPLIER
+                cache_read_rate *= CLAUDE_HAIKU_55_LONG_CONTEXT_MULTIPLIER
+                cache_write_5m_rate *= CLAUDE_HAIKU_55_LONG_CONTEXT_MULTIPLIER
 
         token_multiplier = 1.1 if usage.get("inference_geo") == "us" else 1.0
         cache_write_5m = (
@@ -5880,6 +5893,10 @@ def summary_row(source, title, cost, tokens, turns, models, first_ts, last_ts, m
                 **({"cache_covered_input_tokens": int(
                     values.get("cache_covered_input_tokens") or 0
                 )} if "cache_covered_input_tokens" in values else {}),
+                **({
+                    field: int(values.get(field) or 0)
+                    for field in ("io_covered_input_tokens", "io_covered_output_tokens")
+                } if "io_covered_input_tokens" in values else {}),
             }
             for model, values in model_stats.items()
         ], key=lambda row: (-row["cost"], -row["tokens"], row["model"])),
@@ -9580,7 +9597,7 @@ def agent_set_default_session_budget(budget_usd=None,
         "evidence": [],
         "recommended_action": "Existing session overrides keep their configured caps.",
         "caveat": "This changes only the default cap, not monthly allocations.",
-        "dashboard_url": agent_dashboard_url(panel="settings-budgets"),
+        "dashboard_url": agent_dashboard_url(panel="spend-budgets"),
         "as_of": agent_as_of(),
         "data_scope": "session_budget",
         "default_session_budget_usd": result["budgets"]["default_session_budget"],
