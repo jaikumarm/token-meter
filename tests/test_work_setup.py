@@ -239,6 +239,14 @@ class WorkSetupTests(unittest.TestCase):
         self.assertEqual((status["state"], status["attempts"]), (S.FAILED, 1))
         self.assertEqual(status["failed_during"], S.INSTALLING)
 
+    def test_turning_off_and_on_again_restarts_the_retry_waits(self):
+        setup = self.make()
+        setup._failures, setup._restart = 3, True
+        runs = []
+        setup._run_once = lambda: runs.append(setup._failures)
+        setup._run_safely()
+        self.assertEqual(runs, [3, 0])
+
     def test_retry_setup_right_after_a_final_failure_runs_again(self):
         setup = self.make()
         with setup._lock:

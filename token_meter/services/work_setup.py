@@ -258,6 +258,7 @@ class WorkSetup:
                 if restart:
                     self._cancel.clear()
                     self._retry_now.clear()
+                    self._failures = 0  # turned off and on again: a fresh run
                     self._state = {"state": CHECKING, "reason": "", "detail": "", "done_bytes": 0, "total_bytes": 0,
                                    "needed_bytes": 0, "retry_at": 0, "attempts": self._failures}
             if restart:
