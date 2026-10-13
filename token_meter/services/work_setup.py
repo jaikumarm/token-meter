@@ -562,7 +562,9 @@ class WorkSetup:
     def _download_with_curl(self, url, destination, size, digest, offset):
         # --disable (curl's -q) first: ignore ~/.curlrc, which could add --insecure, an output path, or tracing.
         base = [CURL, "--disable", "--proto", "=https", "--proto-redir", "=https", "--fail", "--location", "--silent",
-                "--show-error", "--retry", "2", "--connect-timeout", "30", "--output", destination]
+                "--show-error", "--retry", "2", "--connect-timeout", "30",
+                # A transfer slower than 1 KB/s for two minutes is stalled: give up and let setup retry later.
+                "--speed-limit", "1024", "--speed-time", "120", "--output", destination]
         code = self._run_curl(base + ["--continue-at", "-", url], destination, offset)
         if code == 33:  # the server will not resume this file: start it over once
             if os.path.exists(destination):

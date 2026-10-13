@@ -183,6 +183,7 @@ class WorkSetupTests(unittest.TestCase):
         self.assertEqual(curl[1], "--disable")  # ~/.curlrc is ignored
         self.assertEqual(curl[curl.index("--proto") + 1], "=https")
         self.assertEqual(curl[curl.index("--proto-redir") + 1], "=https")
+        self.assertEqual((curl[curl.index("--speed-limit") + 1], curl[curl.index("--speed-time") + 1]), ("1024", "120"))
         self.assertTrue(os.path.isfile(setup.binary))
 
     def test_a_download_that_never_matches_says_which_check_failed(self):
