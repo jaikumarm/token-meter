@@ -1880,14 +1880,16 @@ process.stdout.write(JSON.stringify(out));
         self.assertFalse(out["hidden"])
         self.assertEqual(out["cols"], "110px repeat(2,minmax(72px,1fr))")
         # One number per cell; cost per request once per effort column (spend-weighted over its rows).
-        self.assertIn('role=cell style="--heat:0.072"', out["grid"])
+        self.assertIn('role=cell tabindex=0 style="--heat:0.072"', out["grid"])
+        self.assertIn('aria-label="Everyday at high: 9% pushback · 197 labeled follow-ups · 269 requests · $1.50/request"', out["grid"])
         self.assertIn(">9%</div>", out["grid"])
         self.assertIn("high<small>$1.49/req</small>", out["grid"])
         self.assertIn("xhigh<small>$2.50/req</small>", out["grid"])
-        self.assertIn('data-few role=cell title="Too few labeled follow-ups (2)', out["grid"])
+        self.assertIn('data-few role=cell tabindex=0 title="Routine at high: too few labeled follow-ups (2)', out["grid"])
+        self.assertIn('aria-label="Routine at high: too few labeled follow-ups (2)', out["grid"])
         self.assertIn('data-empty role=cell aria-label="No requests">·</div>', out["grid"])
         self.assertNotIn("follow-ups ·", out["grid"].split("title=")[0])  # no small print in the cells themselves
-        self.assertIn("<b>Everyday: xhigh → high is safe</b> · 9% vs 16% pushback · saves $720.25", out["verdicts"])
+        self.assertIn("<b>Everyday: xhigh → high looks safe</b> · 9% vs 16% pushback · saves $720.25", out["verdicts"])
         self.assertIn("$12.50 without a recorded effort left out", out["note"])
         self.assertIn(' selected>gpt · Codex', out["select"])
         self.assertIn(' selected>other · Codex', out["switched"])
@@ -2342,7 +2344,7 @@ process.stdout.write(JSON.stringify(out));
         self.assertIn("Most pushback</span><b title=\"gpt-5.6-terra · Codex\">gpt-5.6-terra <s>25%</s>", outs["clear"])
         self.assertEqual(len(cards), 3)
         model, reasoning, pushback = cards
-        self.assertIn("$1,836<small>biggest saving</small>", model)
+        self.assertIn('$1,836<small title="Savings can overlap">biggest saving</small>', model)
         self.assertEqual(model.count("class=workDrillBtn"), 3)  # the top three by saving
         self.assertIn("gpt-5.6-sol<b>→</b>gpt-6-sol", model)
         self.assertIn("opus-4-8<b>→</b>opus-5-5", model)
