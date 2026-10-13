@@ -285,15 +285,30 @@ class RequestAggregationTests(unittest.TestCase):
                          [("doc", 3.0, 3.0), ("long", 2.0, 12.0)])
         self.assertEqual(out["spend"], 5.0)
 
-    def test_live_hints_follow_the_latest_request(self):
-        r = row("live", ["2026-09-30"] * 2, [1.0, 1.0])
+    def live_hints(self, costs, labels, effort=""):
+        r = row("live", ["2026-09-30"] * len(costs), costs)
         r["session"] = "live"
-        requests = {"live": [{"complexity": "complex"}, {"complexity": "routine"}]}
-        hints = domain.live_session_hints([r, row("other", ["2026-09-30"], [1.0], model="mid")],
-                                          [{"session": "live"}], {}, lambda ident: ident.split("\0")[0],
-                                          lambda m, p: self.PRICES.get(m),
-                                          requests_for=lambda ident, n: requests.get(ident.split("\0")[0], [{}] * n))
-        self.assertEqual([h["kind"] for h in hints["live"]], ["premium_routine"])
+        for request in r["_work_requests"]:
+            request["effort"] = effort
+        labels = [dict(label, work_type="feature") for label in labels]
+        return domain.live_session_hints([r, row("other", ["2026-09-30"], [1.0], model="mid")],
+                                         [{"session": "live"}], {}, lambda ident: ident.split("\0")[0],
+                                         lambda m, p: self.PRICES.get(m),
+                                         requests_for=lambda ident, n: labels[:n]).get("live", [])
+
+    def test_routine_live_hints_need_most_of_the_session_spend(self):
+        # A costly complex request followed by short routine follow-ups is not routine work.
+        self.assertEqual(self.live_hints([8.0, 1.0, 1.0], [{"complexity": "complex"}, {"complexity": "routine"},
+                                                           {"complexity": "routine"}], effort="xhigh"), [])
+        # Half is not most.
+        self.assertEqual(self.live_hints([1.0, 1.0], [{"complexity": "complex"}, {"complexity": "routine"}]), [])
+        hints = self.live_hints([1.0, 3.0], [{"complexity": "complex"}, {"complexity": "routine"}], effort="xhigh")
+        self.assertEqual([(h["kind"], h.get("model"), h.get("effort")) for h in hints],
+                         [("premium_routine", "gpt-5.6", None), ("effort_routine", None, "xhigh")])
+        self.assertIn("Next time", hints[0]["detail"])
+        self.assertIn("Next time", hints[1]["detail"])
+        self.assertEqual(self.live_hints([1.0, 3.0], [{"complexity": "routine"}, {"complexity": "routine"}],
+                                         effort="medium")[0]["kind"], "premium_routine")
 
 
 def collections_sum(out):
@@ -485,10 +500,10 @@ class ReviewFixTests(unittest.TestCase):
             self.assertEqual((feature["spend"], found["spend"]), (expected, expected), months)
 
     def test_live_hints_use_the_model_of_the_labeled_request(self):
-        r = row("live", ["2026-09-30"] * 2, [1.0, 1.0])
+        r = row("live", ["2026-09-30"] * 2, [3.0, 1.0])
         r["session"] = "live"
         r["_work_requests"][0]["model"], r["_work_requests"][1]["model"] = "gpt-5.6", "cheap"
-        requests = {"live": [{"complexity": "routine"}, {}]}  # the newest request is not labeled yet
+        requests = {"live": [{"work_type": "feature", "complexity": "routine"}, {}]}  # the newest is not labeled yet
         hints = domain.live_session_hints([r, row("o", ["2026-09-30"], [1.0], model="mid")], [{"session": "live"}],
                                           {}, lambda ident: ident.split("\0")[0], lambda m, p: self.PRICES.get(m),
                                           requests_for=lambda ident, n: requests.get(ident.split("\0")[0], [{}] * n))

@@ -1402,11 +1402,18 @@ def live_session_hints(rows, current, labels, key_for, output_price, corrections
         tier = tiers.get((runtime, model))
         effort = str(current.get("effort") or row.get("reasoning_effort") or "").lower()
         hints = []
-        if complexity == "routine" and tier == "premium":
-            hints.append({"kind": "premium_routine", "model": model,
+        # One short routine follow-up is not routine work: the routine hints need most of the labeled spend.
+        start = (row.get("start") or "")[:10]
+        requests = [r for r in _session_requests(row, entry, own or [], [d or start for d in turn_days(row)], (),
+                                                 tiers, PENDING, None) if r["complexity"]]
+        labeled_spend = sum(r["cost"] or 1e-9 for r in requests)
+        premium = [r for r in requests if r["complexity"] == "routine" and r["tier"] == "premium"]
+        if premium and sum(r["cost"] or 1e-9 for r in premium) * 2 > labeled_spend:
+            hints.append({"kind": "premium_routine", "model": _dominant(premium, "model")[:MAX_HINT_MODEL],
                           "to_model": (standard.get(runtime) or "")[:MAX_HINT_MODEL]})
-        if complexity == "routine" and effort in HIGH_EFFORTS:
-            hints.append({"kind": "effort_routine", "effort": effort})
+        high = [r for r in requests if r["complexity"] == "routine" and r["effort"] in HIGH_EFFORTS]
+        if high and sum(r["cost"] or 1e-9 for r in high) * 2 > labeled_spend:
+            hints.append({"kind": "effort_routine", "effort": _dominant(high, "effort")})
         if complexity in ("complex", "high_impact") and tier == "light" and int(entry.get("corrections") or 0) > 0:
             hints.append({"kind": "light_complex", "model": model})
         if corrections_for is not None and turns > 2 and entry.get("correction_labels"):
@@ -1430,12 +1437,13 @@ def _live_hint_text(hint):
         return {"title": "Complex work on a light model",
                 "detail": f"{hint['model']} is getting pushback on a complex request. A stronger model may finish sooner."}
     if kind == "premium_routine":
-        return {"title": "Routine request on a premium model",
-                "detail": f"{hint['to_model']} handles routine work for less." if hint["to_model"]
-                else "A mid-priced model handles routine work for less."}
+        to = hint["to_model"] or "a mid-priced model"
+        return {"title": "Mostly routine work on a premium model",
+                "detail": f"Most of this session's spend is routine requests. Next time, start work like this on {to}."}
     if kind == "effort_routine":
-        return {"title": "High reasoning effort on routine work",
-                "detail": f"{hint['effort']} effort costs more than a routine request needs. Try medium."}
+        return {"title": "Mostly routine work at high effort",
+                "detail": f"Most of this session's spend is routine requests at {hint['effort']} effort. "
+                          "Next time, try medium for work like this."}
     return {"title": "Long session",
             "detail": f"{hint['turns']} requests so far, and each re-sends the conversation. "
                       "A fresh session with a short summary costs less."}

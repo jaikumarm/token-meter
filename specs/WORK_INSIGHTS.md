@@ -332,15 +332,17 @@ both `claude-opus`, versions `(4, 8)` and `(5, 5)`).
 ## 7. Live suggestions and notifications
 
 Each running session on **Sessions → Current sessions** can show up to three
-suggestions (`live_session_hints`), computed when the live state refreshes from
-its latest labeled request and the model it is using now:
+suggestions (`live_session_hints`), computed when the live state refreshes.
+The routine checks weigh the whole session, because a short follow-up judged
+on its own text reads routine even when it starts heavy work, and they advise
+the next session, because switching mid-session re-reads the conversation:
 
 | Suggestion | When |
 | --- | --- |
 | Two pushbacks in a row | the last two confidently labeled follow-ups were pushback |
-| Complex work on a light model | Complex+ request on a light-tier model that has had pushback in this session (a per-session check, looser than Right-sizing's median rule) |
-| Routine request on a premium model | routine request on a premium-tier model; names the app's most-used standard model |
-| High reasoning effort on routine work | routine request at xhigh, max, or ultra effort |
+| Complex work on a light model | the latest labeled request is Complex+ on a light-tier model that has had pushback in this session (a per-session check, looser than Right-sizing's median rule) |
+| Mostly routine work on a premium model | routine requests on a premium-tier model are more than half of the session's labeled spend; names the app's most-used standard model |
+| Mostly routine work at high effort | routine requests at xhigh, max, or ultra effort are more than half of the session's labeled spend |
 | Long session | 30 or more requests so far |
 
 The first four need Work labels; the long-session check works without them.
