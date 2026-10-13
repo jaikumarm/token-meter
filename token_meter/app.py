@@ -8465,7 +8465,7 @@ WORK_DRILL_ENUMS = {
     "work_type": set(_work.WORK_TYPES) | {"unclear"},
     "complexity": {"routine", "everyday", "complex"},
     "tier": {"light", "standard", "premium"},
-    "effort": {"low", "medium", "high", "xhigh", "max", "ultra"},
+    "effort": {"default", "low", "medium", "high", "xhigh", "max", "ultra"},
     "outcome": {"single_shot", "accepted", "recovered", "ended_on_pushback", "unclear", "pending"},
     "tag": set(_domain_work_tags),
 }

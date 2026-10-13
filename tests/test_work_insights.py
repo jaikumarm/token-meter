@@ -1877,6 +1877,7 @@ const grid=$('w-effort-grid');grid.innerHTML='untouched';renderWorkEffortModels(
 const target={dataset:{cell:'everyday:high',detail:'Everyday at high: detail'},focus(){out.refocused=true;}};
 document.activeElement={dataset:{cell:'everyday:high'}};grid.contains=node=>node===document.activeElement;grid.querySelectorAll=()=>[{dataset:{cell:'routine:high'}},target];
 model.rows[1].cells[0].rework.rate=.1;renderWorkEffortModels(both);out.changedGrid=grid.innerHTML!=='untouched';out.detailAfterPoll=$('w-effort-detail').textContent;
+workEffortModel='';renderWorkEffortModels({effort_by_model:{models:[{model:'opus',runtime:'Claude-3P',efforts:['default'],verdicts:[],rows:[{complexity:'routine',cells:[cell('default',4,.25,4,true)]}]}],unrecorded_spend:0}});out.defaultGrid=$('w-effort-grid').innerHTML;
 renderWorkEffortModels({effort_by_model:{models:[],unrecorded_spend:0}});out.emptyHidden=$('w-effort-models').hidden;
 process.stdout.write(JSON.stringify(out));
 """
@@ -1898,7 +1899,9 @@ process.stdout.write(JSON.stringify(out));
         self.assertIn(' selected>gpt · Codex', out["select"])
         self.assertIn(' selected>other · Codex', out["switched"])
         self.assertEqual(out["switchedVerdicts"], "")  # no call: nothing to say, so nothing shown
-        self.assertTrue(out["emptyHidden"])  # only models with a recorded reasoning effort get the panel
+        self.assertTrue(out["emptyHidden"])  # only models with labeled requests get the panel
+        self.assertIn('title="No effort recorded: the app&#39;s default level">default<small>$0.50/req</small>',
+                      out["defaultGrid"])
         # The Work poll re-renders often: unchanged cells are not rebuilt, and changed ones keep keyboard focus.
         self.assertEqual(out["samePollKeepsGrid"], "untouched")
         self.assertTrue(out["changedGrid"])
@@ -3156,6 +3159,8 @@ class RightSizingColourTests(unittest.TestCase):
                   encoding="utf-8") as handle:
             page = handle.read()
         self.assertIn("{key:'extra',label:'Extra high+',levels:['xhigh','max','ultra']}", page)
+        self.assertIn("{key:'default',label:'Default',levels:['default'],note:'not recorded'}", page)
+        self.assertIn("default:'var(--w-unclear)'", page)
         rows = [row("a"), row("b")]
         rows[0]["reasoning_effort"], rows[1]["reasoning_effort"] = "xhigh", "max"
         out = domain.find_sessions(rows, {}, lambda ident: ident.split("\0")[0], DomainTests.AREAS, lambda m, p: None,
@@ -3165,4 +3170,5 @@ class RightSizingColourTests(unittest.TestCase):
                 mock.patch.object(meter, "_work_service_instance", None), \
                 mock.patch.dict(meter._xsess, {"data": {"ok": True}, "internal_rows": tuple(rows)}):
             self.assertEqual(meter.work_sessions_state({"months": ["6"], "effort": ["xhigh,max"]})[1], 200)
+            self.assertEqual(meter.work_sessions_state({"months": ["6"], "effort": ["default"]})[1], 200)
             self.assertEqual(meter.work_sessions_state({"months": ["6"], "effort": ["xhigh,bogus"]})[1], 400)

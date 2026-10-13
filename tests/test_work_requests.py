@@ -250,10 +250,19 @@ class RequestAggregationTests(unittest.TestCase):
         requests = {"s": [{"work_type": "feature", "area": "Frontend & UI", "complexity": "routine"},
                           {"work_type": "feature", "area": "Frontend & UI", "complexity": "routine", "pushback": False},
                           {"work_type": "feature", "area": "Frontend & UI", "complexity": "routine", "pushback": False}]}
-        out = self.build([r], requests)["effort_by_model"]
+        built = self.build([r], requests)
+        out = built["effort_by_model"]
         model = out["models"][0]
-        self.assertEqual((model["model"], model["runtime"], model["efforts"]), ("gpt-5.6", "Codex", ["low", "high"]))
-        self.assertEqual(out["unrecorded_spend"], 3.0)  # the request with no recorded effort stays out
+        # A request with no recorded effort ran at the app's default level.
+        self.assertEqual((model["model"], model["runtime"], model["efforts"]),
+                         ("gpt-5.6", "Codex", ["default", "low", "high"]))
+        self.assertEqual(out["unrecorded_spend"], 0)
+        self.assertEqual(built["right_sizing"]["effort"]["efforts"], ["default", "low", "high"])
+        self.assertFalse([c for c in built["right_sizing"]["effort"]["cells"] if c["effort"] == "default" and c["flag"]])
+        drill = domain.find_sessions([r], {}, lambda ident: ident.split("\0")[0], AREAS,
+                                     lambda m, p: self.PRICES.get(m), {"effort": "default"}, today="2026-09-30",
+                                     requests_for=lambda ident, n: requests[ident.split("\0")[0]])
+        self.assertEqual((drill["total"], drill["spend"]), (1, 3.0))
 
     def test_drill_down_returns_sessions_with_the_matching_spend(self):
         rows = [row("long", ["2026-09-10"] * 2, [10.0, 2.0]), row("doc", ["2026-09-11"], [3.0])]
@@ -307,7 +316,7 @@ class EffortByModelTests(unittest.TestCase):
     def test_each_model_keeps_its_own_levels_and_runtime(self):
         rows = (self.requests("opus", "Claude Code", "routine", "high", 3, 0, 1.0)
                 + self.requests("opus", "Cursor", "routine", "low", 3, 0, 0.1)
-                + self.requests("opus", "Claude Code", "routine", "", 5, 0, 9.0)  # no effort recorded
+                + self.requests("opus", "Claude Code", "routine", "turbo", 5, 0, 9.0)  # not a known level
                 + self.requests("gpt", "Codex", "", "high", 4, 0, 2.0))  # effort, but no complexity label yet
         out = domain._effort_by_model(rows)
         by = {(m["model"], m["runtime"]): m for m in out["models"]}
@@ -318,6 +327,19 @@ class EffortByModelTests(unittest.TestCase):
         cell = by[("opus", "Claude Code")]["rows"][0]["cells"][0]
         self.assertEqual((cell["requests"], cell["cost_per_request"]), (3, 1.0))
         self.assertTrue(cell["rework"]["few_samples"])
+
+    def test_default_effort_is_shown_but_never_compared_with_a_level(self):
+        only = self.requests("opus", "Claude-3P", "routine", "default", 200, 2, 0.5)
+        model = domain._effort_by_model(only)["models"][0]
+        self.assertEqual((model["model"], model["efforts"], model["verdicts"]), ("opus", ["default"], []))
+        self.assertEqual(model["rows"][0]["cells"][0]["requests"], 200)
+        # Strong evidence either side of "default" still makes no call against it, while real neighbours compare.
+        rows = (self.requests("gpt", "Codex", "routine", "default", 200, 0, 0.01)
+                + self.requests("gpt", "Codex", "routine", "medium", 200, 4, 0.04)
+                + self.requests("gpt", "Codex", "routine", "high", 200, 6, 0.09))
+        model = domain._effort_by_model(rows)["models"][0]
+        self.assertEqual(model["efforts"], ["default", "medium", "high"])
+        self.assertEqual([(v["lower"], v["higher"]) for v in model["verdicts"]], [("medium", "high")])
 
     def test_low_effort_that_draws_more_pushback_on_complex_work_is_worth_raising(self):
         rows = (self.requests("gpt", "Codex", "complex", "low", 60, 20, 0.05)

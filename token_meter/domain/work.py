@@ -159,7 +159,9 @@ def _rate(corrections, samples):
 OUTCOMES = ("single_shot", "accepted", "recovered", "ended_on_pushback", "unclear", "pending")
 MAX_FIT_MODELS = 5
 MAX_TREND_MODELS = 6
-EFFORT_ORDER = ("low", "medium", "high", "xhigh", "max", "ultra")
+# A request with no recorded effort ran at the app's default, whose level is unknown: shown, never ranked.
+DEFAULT_EFFORT = "default"
+EFFORT_ORDER = (DEFAULT_EFFORT, "low", "medium", "high", "xhigh", "max", "ultra")
 HIGH_EFFORTS = ("xhigh", "max", "ultra")
 
 
@@ -352,7 +354,7 @@ def _session_requests(row, entry, own, days, area_names, tiers, unlabeled, sessi
             "ordinal": ordinal, "day": day or (row.get("start") or "")[:10], "cost": sum(spread.values()),
             "day_costs": spread,
             "model": request_model, "runtime": runtime, "tier": tiers.get((runtime, request_model)),
-            "effort": str(item.get("effort") or effort).lower(),
+            "effort": str(item.get("effort") or effort).lower() or DEFAULT_EFFORT,
             "work_type": labels.get("work_type") or "",
             "area": area, "area_guess": bool(labels.get("area_guess")) and area in area_names,
             "complexity": labels.get("complexity") or "",
@@ -829,7 +831,8 @@ def _effort_by_model(requests):
     """Per model (scoped by runtime): complexity × that model's own effort levels, with pushback and cost.
 
     Effort means different things on different models, so levels are only ever compared within one model,
-    one complexity row at a time, between neighbouring levels. Requests without a recorded effort are left out.
+    one complexity row at a time, between neighbouring levels. "default" gets a column but is never compared;
+    requests with an unknown effort string are left out.
     """
     by_model = collections.defaultdict(list)
     unrecorded = collections.Counter()
@@ -838,7 +841,7 @@ def _effort_by_model(requests):
             continue  # not labeled yet: it cannot land in a cell
         key = (r["model"], r["runtime"])
         # "none" is a real setting (no extra reasoning), so it counts as a recorded level.
-        if r["effort"] in EFFORT_RANK:
+        if r["effort"] in EFFORT_RANK or r["effort"] == DEFAULT_EFFORT:
             by_model[key].append(r)
         else:
             unrecorded[key] += r["cost"]
@@ -846,7 +849,7 @@ def _effort_by_model(requests):
     models = []
     for model, runtime in ranked:
         group = by_model[(model, runtime)]
-        efforts = [e for e in EFFORT_RANK if any(r["effort"] == e for r in group)]
+        efforts = [e for e in (DEFAULT_EFFORT, *EFFORT_RANK) if any(r["effort"] == e for r in group)]
         rows, verdicts = [], []
         for name, members in COMPLEXITY_GROUPS:
             cells = []
@@ -858,7 +861,7 @@ def _effort_by_model(requests):
                               "cost_per_request": spend / len(cell) if spend > 0 else None,
                               "rework": _request_rework(cell)})
             rows.append({"complexity": name, "cells": cells})
-            verdicts += _effort_verdicts(name, cells)
+            verdicts += _effort_verdicts(name, [cell for cell in cells if cell["effort"] != DEFAULT_EFFORT])
         models.append({"model": model, "runtime": runtime, "efforts": efforts, "rows": rows,
                        "spend": round(sum(r["cost"] for r in group), 6), "verdicts": verdicts})
     return {"models": models, "unrecorded_spend": round(sum(unrecorded.values()), 6),

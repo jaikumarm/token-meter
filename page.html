@@ -8212,8 +8212,8 @@ function renderWorkEffort(insights){
  table.innerHTML=`<thead><tr><th>Complexity</th>${effort.efforts.map(level=>`<th class=num>${esc(level)}</th>`).join('')}</tr></thead><tbody>${groups.map(group=>`<tr><td>${group==='complex'?'Complex+':esc(WORK_COMPLEXITY_LABELS[group])}</td>${effort.efforts.map(level=>{const item=cell(group,level);if(!item||!item.requests)return '<td class="num workMuted">--</td>';return `<td class="num mono workFitCell"><button type=button class=workDrillBtn data-drill="${esc(JSON.stringify({complexity:group,effort:level}))}" data-drill-label="${esc(`${group==='complex'?'Complex+':WORK_COMPLEXITY_LABELS[group]} · ${level} effort`)}">${money(item.spend)}${item.flag?'<span class=workFitBest style="color:var(--warn);border-color:rgb(var(--orange-rgb)/.5)">▲ Overthinking?</span>':''}<small>${item.requests} · rework ${item.rework?workRateText(item.rework):'--'}</small></button></td>`;}).join('')}</tr>`).join('')}</tbody>`;
 }
 const WORK_TIER_COLORS={light:'var(--w-tier-light)',standard:'var(--w-tier-standard)',premium:'var(--w-tier-premium)'};
-const WORK_EFFORT_BANDS=[{key:'normal',label:'Low–medium',levels:['low','medium']},{key:'high',label:'High',levels:['high']},{key:'extra',label:'Extra high+',levels:['xhigh','max','ultra']}];
-const WORK_EFFORT_BAND_COLORS={normal:'var(--w-tier-light)',high:'var(--w-tier-standard)',extra:'var(--w-tier-premium)'};
+const WORK_EFFORT_BANDS=[{key:'default',label:'Default',levels:['default'],note:'not recorded'},{key:'normal',label:'Low–medium',levels:['low','medium']},{key:'high',label:'High',levels:['high']},{key:'extra',label:'Extra high+',levels:['xhigh','max','ultra']}];
+const WORK_EFFORT_BAND_COLORS={default:'var(--w-unclear)',normal:'var(--w-tier-light)',high:'var(--w-tier-standard)',extra:'var(--w-tier-premium)'};
 const WORK_EFFORT_COLORS={low:'var(--w-e1)',medium:'var(--w-e2)',high:'var(--w-e3)',xhigh:'var(--w-e4)',max:'var(--w-e5)',ultra:'var(--w-e6)'};
 const WORK_GROUP_LABELS={routine:'Routine',everyday:'Everyday',complex:'Complex+'};
 function workMeter(rate,max,{few=false,color=''}={}){
@@ -8250,7 +8250,7 @@ function renderWorkMix(insights){
  const effort=sizing.effort||{},levels=effort.efforts||[];
  if(!levels.length){effortHost.innerHTML='<div class=workEmpty>No reasoning-effort data for these sessions.</div>';}
  else{
-  // Six effort levels are folded into three readable groups; the tables below keep every level.
+  // Effort levels are folded into readable groups (unrecorded ones into Default); the tables below keep every level.
   const bands=WORK_EFFORT_BANDS.map(band=>({...band,levels:band.levels.filter(level=>levels.includes(level))})).filter(band=>band.levels.length);
   const cell=(group,key)=>{
    const band=bands.find(item=>item.key===key),members=(effort.cells||[]).filter(item=>item.complexity===group&&band.levels.includes(item.effort));
@@ -8258,7 +8258,7 @@ function renderWorkMix(insights){
    const samples=members.reduce((sum,item)=>sum+(item.rework?.samples||0),0),hits=members.reduce((sum,item)=>sum+(item.rework?(item.rework.rate*item.rework.samples):0),0);
    return {spend:members.reduce((sum,item)=>sum+item.spend,0),requests:members.reduce((sum,item)=>sum+item.requests,0),flag:members.some(item=>item.flag)?'possible_overthinking':'',rework:samples?{rate:hits/samples,samples}:null,levels:members.filter(item=>item.requests).map(item=>item.effort)};
   };
-  effortHost.innerHTML=workMixRows(groups,bands.map(band=>band.key),cell,key=>WORK_EFFORT_BAND_COLORS[key],key=>bands.find(band=>band.key===key).label,(group,key)=>({complexity:group,effort:(cell(group,key)?.levels||[]).join(',')}),item=>Boolean(item.flag))+`<div class=workMixLegend>${bands.map(band=>`<span><i style="--swatch:${WORK_EFFORT_BAND_COLORS[band.key]}"></i>${esc(band.label)}<small>${esc(band.levels.join(', '))}</small></span>`).join('')}<span><i class="flag effort"></i>High effort on routine work</span></div>`;
+  effortHost.innerHTML=workMixRows(groups,bands.map(band=>band.key),cell,key=>WORK_EFFORT_BAND_COLORS[key],key=>bands.find(band=>band.key===key).label,(group,key)=>({complexity:group,effort:(cell(group,key)?.levels||[]).join(',')}),item=>Boolean(item.flag))+`<div class=workMixLegend>${bands.map(band=>`<span><i style="--swatch:${WORK_EFFORT_BAND_COLORS[band.key]}"></i>${esc(band.label)}<small>${esc(band.note||band.levels.join(', '))}</small></span>`).join('')}<span><i class="flag effort"></i>High effort on routine work</span></div>`;
  }
 }
 function workFlagReason(cell){
@@ -8318,7 +8318,7 @@ function workEffortVerdict(verdict){
 }
 function renderWorkEffortModels(insights){
  const data=insights?.effort_by_model||{},models=data.models||[],box=$('w-effort-models');
- box.hidden=!insights||!models.length; // only models with a recorded reasoning effort
+ box.hidden=!insights||!models.length; // only models with labeled requests
  if(!models.length)return;
  // JSON rather than a NUL-joined key: the HTML parser rewrites NUL inside attributes.
  const key=model=>JSON.stringify([model.model,model.runtime]);
@@ -8328,7 +8328,7 @@ function renderWorkEffortModels(insights){
  // One number per cell (pushback); cost per request sits once per effort column.
  const columnCost=effort=>{let spend=0,requests=0;(chosen.rows||[]).forEach(row=>{const cell=(row.cells||[]).find(item=>item.effort===effort);if(cell&&cell.cost_per_request!=null){spend+=cell.spend;requests+=cell.requests;}});return requests?spend/requests:null;};
  grid.style.gridTemplateColumns=`110px repeat(${efforts.length},minmax(72px,1fr))`;
- const head=`<div role=row style="display:contents"><div class=workSizingHead role=columnheader></div>${efforts.map(effort=>{const cost=columnCost(effort);return `<div class="workSizingHead workEffortHead" role=columnheader>${esc(effort)}${cost!=null?`<small>${money(cost)}/req</small>`:''}</div>`;}).join('')}</div>`;
+ const head=`<div role=row style="display:contents"><div class=workSizingHead role=columnheader></div>${efforts.map(effort=>{const cost=columnCost(effort);return `<div class="workSizingHead workEffortHead" role=columnheader${effort==='default'?` title="${esc('No effort recorded: the app\'s default level')}"`:''}>${esc(effort)}${cost!=null?`<small>${money(cost)}/req</small>`:''}</div>`;}).join('')}</div>`;
  const html=head+(chosen.rows||[]).map(row=>`<div role=row style="display:contents"><div class=workSizingRowHead role=rowheader>${esc(WORK_EFFORT_ROWS[row.complexity]||row.complexity)}</div>${(row.cells||[]).map(cell=>{
   if(!cell.requests)return '<div class=workEffortCell data-empty role=cell aria-label="No requests">·</div>';
   const cost=cell.cost_per_request!=null?`${money(cell.cost_per_request)}/request`:'cost unavailable';

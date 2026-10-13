@@ -242,6 +242,8 @@ sessions *started* in the range.
    validated hues, cheap to expensive: teal (light models; low–medium effort),
    blue (standard; high), and amber (premium; xhigh, max, or ultra). Effort is
    folded into those three bands for readability; the tables keep every level.
+   A request with no recorded effort ran at the app's default, so it is
+   **Default** (gray, "not recorded"): shown, never flagged, never compared.
    Striped segments are mismatches:
    premium models or xhigh/max/ultra effort on routine work, or light models on
    complex work whose pushback rate is above the median cell.
@@ -294,17 +296,19 @@ spend, and capped at 8. Savings are estimates and can overlap.
 
 Under the Right-sizing cards, "Pushback by reasoning effort" shows one model
 at a time, chosen from a dropdown (scoped by app, top five by spend among
-models with recorded effort; the panel is hidden when no model has one), as a
+models with labeled requests; the panel is hidden when no model has one), as a
 complexity × reasoning-effort matrix. Each cell holds one number, the pushback
 rate, shaded by rate, with follow-ups, requests, and cost in its tooltip; each
 effort column shows its cost per request once. Effort means something different on each model, so
 columns are that model's own levels and levels are never compared across
 models. A cell with fewer than 20 labeled follow-ups shows a faint dot.
-Only requests with a complexity label and a recorded effort count (Codex
-`none` is a level); the rest of the labeled spend is named as left out. A cell
-whose requests are all unpriced shows no cost rather than $0. Codex records effort per request; Claude
-Code records `perTurnEffort` (older builds: `effort`) only where the app
-offers the setting, so Claude models appear once one is recorded.
+Only requests with a complexity label count (Codex `none` is a level). A
+request with no recorded effort goes in a **default** column: it ran at the
+app's default level, which the trace does not name, so it is never compared
+with another level. An effort value that is not a known level is named as left
+out. A cell whose requests are all unpriced shows no cost rather than $0.
+Codex records effort per request; Claude Code records `perTurnEffort` (older
+builds: `effort`), which is empty when the default is in use.
 
 Verdicts compare levels next to each other among the model's own levels,
 within one complexity row, when both have at least 20 labeled follow-ups and a
