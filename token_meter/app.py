@@ -37,6 +37,7 @@ import sqlite3
 import stat
 import subprocess
 import statistics
+import sys
 import time
 import threading
 from collections import defaultdict
@@ -8225,7 +8226,8 @@ def work_setup():
 
             _work_setup_instance = _work_setup.WorkSetup(
                 **_work_setup.default_paths(), get_settings=work_insights_settings,
-                set_ollama_url=use_url, on_ready=ready)
+                set_ollama_url=use_url, on_ready=ready,
+                log=lambda message: print(f"work setup: {message}", file=sys.stderr, flush=True))
         return _work_setup_instance
 
 

@@ -1134,6 +1134,18 @@ body.spectrumApp .spectrumPageHead:after{content:"";position:absolute;right:0;bo
 .workStatusText strong{font-size:var(--fs-13)}
 .workEnableCta{display:flex;align-items:center;gap:12px;margin:12px 0}
 .workEnableCta[hidden]{display:none}
+.workSetupSteps{display:flex;flex-wrap:wrap;gap:6px 16px;margin:8px 0 0;padding:0;list-style:none;color:var(--faint);font-size:var(--fs-12)}
+.workSetupSteps[hidden]{display:none}
+.workSetupSteps li::before{content:"○";margin-right:6px}
+.workSetupSteps li[data-state=done]{color:var(--dim)}
+.workSetupSteps li[data-state=done]::before{content:"✓";color:var(--good)}
+.workSetupSteps li[data-state=current]{color:var(--fg);font-weight:var(--fw-bold)}
+.workSetupSteps li[data-state=current]::before{content:"●";color:var(--accent)}
+.workSetupSteps li[data-state=failed]{color:var(--warn);font-weight:var(--fw-bold)}
+.workSetupSteps li[data-state=failed]::before{content:"!";color:var(--warn)}
+.workSetupBar{width:min(100%,420px);height:6px;margin-top:8px;border-radius:var(--radius-pill);background:rgb(var(--tint-rgb)/.08);overflow:hidden}
+.workSetupBar[hidden]{display:none}
+.workSetupBar i{display:block;height:100%;width:0;border-radius:inherit;background:var(--accent);transition:width .4s}
 .workEnableCta small{color:var(--dim);font-size:var(--fs-12)}
 .workStatusText span{color:var(--dim);font-size:var(--fs-11)}
 .workStatusActions{display:flex;align-items:center;gap:8px;flex:0 0 auto}
@@ -2936,7 +2948,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
 	   </div></div>
 	  </div>
 	  <section class="card workStatus" id=w-status aria-live=polite>
-	   <div class=workStatusMain><span class=workStatusPill id=w-state data-state=disabled>Off</span><div class=workStatusText><strong id=w-status-title>Work insights are off</strong><span id=w-status-detail>Turn on local classification in Settings to label sessions.</span></div></div>
+	   <div class=workStatusMain><span class=workStatusPill id=w-state data-state=disabled>Off</span><div class=workStatusText><strong id=w-status-title>Work insights are off</strong><span id=w-status-detail>Turn on local classification in Settings to label sessions.</span><ol class=workSetupSteps id=w-setup-steps hidden aria-label="Setup steps"><li data-step=ollama>Ollama</li><li data-step=model>Download the model</li><li data-step=prepare>Prepare</li><li data-step=label>Label</li></ol><div class=workSetupBar id=w-setup-bar hidden role=progressbar aria-label="Setup progress" aria-valuemin=0 aria-valuemax=100><i></i></div></div></div>
 	   <div class=workStatusActions>
 	    <label class=workPause hidden id=w-pause-wrap><span class=workSrOnly>Pause work insights</span><select class=filterSelect id=w-pause aria-label="Pause work insights"><option value="">Pause…</option><option value=1h>Pause for 1 hour</option><option value=tomorrow>Pause until tomorrow</option><option value=indefinite>Pause until resumed</option></select></label>
 	    <button class=tbtn id=w-resume type=button hidden>Resume</button>
@@ -7620,19 +7632,50 @@ function workDuration(seconds){
 const WORK_SETUP_ACTIVE=['checking','installing_ollama','starting_ollama','downloading_model','importing'];
 let workSetupTimer=0;
 function workGigabytes(bytes){return `${(Math.max(0,bytes||0)/1e9).toFixed(1)} GB`;}
+const WORK_SETUP_STEP={checking:'ollama',installing_ollama:'ollama',starting_ollama:'ollama',downloading_model:'model',importing:'prepare'};
+const WORK_SETUP_DETAIL={size:'The connection dropped before the download finished. What arrived is kept, and the next try resumes from there.',hash:'The downloaded file didn’t match its checksum, so it was deleted and will be downloaded again.',archive:'Ollama’s download didn’t pass its safety check, so it was deleted.',signature:'Ollama’s download wasn’t signed by Ollama, so it was deleted.',http_status:'The download server turned the request away.',tls:'A secure connection couldn’t be made. A proxy, VPN, or network filter may be blocking it.',timeout:'The connection timed out.',connection:'The connection was lost or couldn’t be opened.',curl:'A second download method also failed.',disk:'The disk filled up during the download.',start_timeout:'Ollama took too long to start.',import_failed:'Adding the model to Ollama failed.'};
+// Download speed from successive status polls, smoothed so one slow poll doesn't swing the estimate.
+let workSetupRate={bytes:0,at:0,speed:0,state:''};
+function workSetupSpeed(setup){
+ const now=Date.now(),done=Number(setup.done_bytes||0),rate=workSetupRate;
+ if(rate.state!==setup.state||done<rate.bytes){workSetupRate={bytes:done,at:now,speed:0,state:setup.state};return 0;}
+ const seconds=(now-rate.at)/1000;
+ if(seconds>=2){const sample=(done-rate.bytes)/seconds;rate.speed=rate.speed?rate.speed*.6+sample*.4:sample;rate.bytes=done;rate.at=now;}
+ return rate.speed;
+}
+function workRate(bytesPerSecond){return bytesPerSecond>=1e6?`${(bytesPerSecond/1e6).toFixed(1)} MB/s`:`${Math.max(1,Math.round(bytesPerSecond/1e3))} KB/s`;}
 function workSetupCopy(setup){
  if(!setup)return null;
  const progress=setup.total_bytes?`${workGigabytes(setup.done_bytes)} of ${workGigabytes(setup.total_bytes)}`:'';
+ let pace='';
+ if(['installing_ollama','downloading_model'].includes(setup.state)&&setup.total_bytes){
+  const speed=workSetupSpeed(setup),left=Math.max(0,setup.total_bytes-setup.done_bytes);
+  if(speed>0)pace=` · ${workRate(speed)} · ${workDuration(left/speed)||'almost done'}`;
+  if(speed>0&&speed<1e6)pace+=' · slow connection: this can take a while, and you can leave this page';
+ }
+ const retry=setup.state==='failed'&&setup.retry_at?`Token Meter tries again on its own at ${workClock(setup.retry_at)}${setup.attempts>1?` (attempt ${setup.attempts+1})`:''}, or select Retry setup now.`:'';
+ const why=WORK_SETUP_DETAIL[setup.detail]||'';
  return {
   checking:['Setup','Checking Ollama','Looking for Ollama and the classifier model on this Mac.'],
-  installing_ollama:['Setup',`Installing Ollama ${setup.ollama_version||''}`.trim(),`${progress} · a pinned, signed build that runs only on this Mac.`],
+  installing_ollama:['Setup',`Downloading Ollama ${setup.ollama_version||''}`.trim(),`${progress}${pace} · a pinned, signed build that runs only on this Mac.`],
   starting_ollama:['Setup','Starting Ollama','The first start can take a minute while macOS checks it. Ollama runs in the background on this Mac only.'],
-  downloading_model:['Setup','Downloading the classifier model',`${progress} · the download resumes if it is interrupted.`],
+  downloading_model:['Setup','Downloading the labeling model',`${progress}${pace} · the download resumes if the connection drops.`],
   importing:['Setup','Preparing the model','Adding it to Ollama. This can take a few minutes.'],
-  failed:['Setup',{network:'The download didn’t finish',verify:'A download didn’t match its checksum',disk_space:'Not enough disk space',memory:'Not enough memory on this Mac',ollama_start:'Ollama didn’t start',ollama_offline:'Ollama isn’t running',import:'Importing the model failed'}[setup.reason]||'Setup stopped',
-   {network:'Check the internet connection, then select Retry setup.',verify:'The file was deleted. Select Retry setup to download it again.',disk_space:`Free up about ${workGigabytes(setup.needed_bytes)}, then select Retry setup.`,memory:'The labeling model needs a Mac with at least about 10 GB of memory, so nothing was downloaded.',ollama_start:'Select Retry setup to try again.',ollama_offline:'Start Ollama on this Mac (open the Ollama app or run ollama serve), then select Retry setup.',import:'Select Retry setup to try again.'}[setup.reason]||'Select Retry setup to try again.'],
+  failed:['Setup',{network:'The download stopped',verify:'A download failed its check',disk_space:'Not enough disk space',memory:'Not enough memory on this Mac',ollama_start:'Ollama didn’t start',ollama_offline:'Ollama isn’t running',import:'Importing the model failed'}[setup.reason]||'Setup stopped',
+   [why,retry||({network:'Check the internet connection, then select Retry setup.',verify:'Select Retry setup to download it again.',disk_space:`Free up about ${workGigabytes(setup.needed_bytes)}, then select Retry setup.`,memory:'The labeling model needs a Mac with at least about 10 GB of memory, so nothing was downloaded.',ollama_start:'Select Retry setup to try again.',ollama_offline:'Start Ollama on this Mac (open the Ollama app or run ollama serve), then select Retry setup.',import:'Select Retry setup to try again.'}[setup.reason]||'Select Retry setup to try again.')].filter(Boolean).join(' ')],
  }[setup.state]||null;
 }
+// Which step is done, current, or failed; a failure belongs to the step that was running.
+function renderWorkSetupSteps(setup,lastStep){
+ const list=$('w-setup-steps'),bar=$('w-setup-bar');
+ list.hidden=!setup;bar.hidden=!(setup&&setup.total_bytes&&['installing_ollama','downloading_model'].includes(setup.state));
+ if(!setup)return;
+ const order=['ollama','model','prepare','label'],current=setup.state==='failed'?lastStep:WORK_SETUP_STEP[setup.state];
+ const at=Math.max(0,order.indexOf(current));
+ list.querySelectorAll('li').forEach((item,index)=>{item.dataset.state=index<at?'done':index===at?(setup.state==='failed'?'failed':'current'):'';});
+ if(!bar.hidden){const share=Math.min(100,Math.round(100*setup.done_bytes/setup.total_bytes));bar.querySelector('i').style.width=`${share}%`;bar.setAttribute('aria-valuenow',share);}
+}
+let workSetupLastStep='ollama';
 async function refreshWorkStatus(){
  if(!WORK||!$('view-work').classList.contains('on'))return;
  try{
@@ -7656,7 +7699,7 @@ function renderWorkStatus(payload){
   idle:['Ready',status.pending?'Waiting to label more requests':'Up to date',progress],
   paused:['Paused','Paused',status.paused_until==='indefinite'?'Paused until you resume.':`Paused until ${workClock(status.paused_until)}.`],
   throttled:['Waiting',{on_battery:'Waiting: on battery power',system_busy:'Waiting: this Mac is busy',model_slow:'Waiting: the model is responding slowly',low_memory:'Waiting: memory is low',not_enough_memory:'Waiting: not enough memory on this Mac'}[status.reason]||'Waiting',status.reason==='not_enough_memory'?'The labeling model needs about 6 GB of memory plus room for macOS and your apps, which this Mac doesn’t have. Work insights stay off the model so your Mac stays responsive.':status.reason==='low_memory'?`The model is unloaded so other apps keep their memory. ${progress} · checks again${status.retry_at?` at ${workClock(status.retry_at)}`:' shortly'}.`:`${progress} · checks again in a minute.`],
-  backoff:['Retrying',status.reason==='internal_error'?'Recovering from an internal error':status.reason==='timeout'?'Ollama is slow to answer':'Can’t reach Ollama',status.retry_at?`Retrying at ${workClock(status.retry_at)}. Queued work is kept.`:'Retrying shortly. Queued work is kept.'],
+  backoff:['Retrying',status.reason==='internal_error'?'Recovering from an internal error':status.reason==='timeout'?'Ollama is slow to answer':'Can’t reach Ollama',`${status.retry_at?`Retrying at ${workClock(status.retry_at)}.`:'Retrying shortly.'} Queued work is kept.${status.error_at?` (${status.error_at})`:''}`],
   storage_error:['Error',status.reason==='delete_pending'?'Deleting labels didn’t finish':'Can’t save labels',status.reason==='delete_pending'?'Labeling is stopped until the delete succeeds. Token Meter retries every five minutes.':'Token Meter retries every five minutes.'],
  }[state]||['Ready','Up to date',progress];
  const setupRelevant=status.setup&&(WORK_SETUP_ACTIVE.includes(status.setup.state)||(status.setup.state==='failed'&&['setup_needed','backoff'].includes(status.state)));
@@ -7665,11 +7708,13 @@ function renderWorkStatus(payload){
  const off=!settings.enabled;$('w-turn-on').hidden=!off;$('w-open-settings').hidden=off;
  const pill=$('w-state');pill.dataset.state=setupCopy?(setup.state==='failed'?'setup_needed':'running'):state;pill.textContent=shown[0];
  $('w-status-title').textContent=shown[1];$('w-status-detail').textContent=shown[2];
+ if(setup&&WORK_SETUP_STEP[setup.state])workSetupLastStep=WORK_SETUP_STEP[setup.state];
+ renderWorkSetupSteps(setupCopy?setup:null,workSetupLastStep);
  const setupState=status.setup?.state;
  const serviceNeedsSetup=['setup_needed','backoff'].includes(status.state);
  $('w-setup-retry').hidden=!(settings.enabled&&status.setup&&!WORK_SETUP_ACTIVE.includes(setupState)&&(setupState==='failed'?serviceNeedsSetup:state==='setup_needed'));
  clearTimeout(workSetupTimer);
- if(setup&&WORK_SETUP_ACTIVE.includes(setup.state))workSetupTimer=setTimeout(refreshWorkStatus,4000);
+ if(setup&&(WORK_SETUP_ACTIVE.includes(setup.state)||setup.retry_at))workSetupTimer=setTimeout(refreshWorkStatus,setup.retry_at&&setup.state==='failed'?15000:4000);
  $('w-pause-wrap').hidden=!settings.enabled||state==='paused';
  $('w-resume').hidden=state!=='paused';
 }

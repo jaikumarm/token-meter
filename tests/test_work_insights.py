@@ -353,6 +353,32 @@ class ColdLoadTests(unittest.TestCase):
         self.assertEqual((caught.exception.kind, caught.exception.reason), ("transport", "timeout"))
 
 
+class InternalErrorTests(unittest.TestCase):
+    def test_an_internal_error_records_where_it_failed_but_never_what_it_said(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        service, values, clock = make_service(tmp.name)
+        stop = threading.Event()
+
+        def broken():
+            stop.set()
+            raise KeyError("a secret request text")
+        service.step = broken
+        with mock.patch("sys.stderr", new=__import__("io").StringIO()) as err:
+            service.run_forever(stop)
+        status = service.status()
+        self.assertEqual((status["state"], status["reason"]), (W.STATE_BACKOFF, "internal_error"))
+        self.assertRegex(status["error_at"], r"^KeyError at work_insights\.py:\d+$")  # innermost Token Meter frame
+        self.assertIn("work insights: internal error at KeyError at", err.getvalue())
+        self.assertNotIn("secret", err.getvalue() + json.dumps(status))
+
+    def test_error_site_names_the_innermost_token_meter_frame(self):
+        try:
+            W.question_for("nope", W.default_settings())
+        except KeyError as error:
+            self.assertRegex(W.error_site(error), r"^KeyError at work_insights\.py:\d+$")
+
+
 class MemoryGuardTests(unittest.TestCase):
     GB = 1024 ** 3
 
@@ -1782,6 +1808,50 @@ class SurfaceContractTests(unittest.TestCase):
         go = self.page.index(":is(body,body.spectrumApp) .tbtn.go{padding:10px 18px;border-color:rgb(var(--green-rgb)/.7);background:var(--good);")
         self.assertGreater(go, self.page.index("body.spectrumApp .tbtn:hover:not(:disabled){"))
         self.assertIn(".workEnableCta[hidden]{display:none}", self.page)
+
+    def test_setup_shows_steps_progress_speed_and_the_next_retry(self):
+        for marker in ('<ol class=workSetupSteps id=w-setup-steps hidden aria-label="Setup steps">',
+                       '<div class=workSetupBar id=w-setup-bar hidden role=progressbar',
+                       "pace=` · ${workRate(speed)} · ${workDuration(left/speed)||'almost done'}`;",
+                       "slow connection: this can take a while, and you can leave this page",
+                       "Token Meter tries again on its own at ${workClock(setup.retry_at)}",
+                       "tls:'A secure connection couldn’t be made. A proxy, VPN, or network filter may be blocking it.'",
+                       "renderWorkSetupSteps(setupCopy?setup:null,workSetupLastStep);",
+                       "Queued work is kept.${status.error_at?` (${status.error_at})`:''}"):
+            self.assertIn(marker, self.page)
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_setup_copy_reads_speed_failures_and_steps(self):
+        page = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "page.html")
+        script = """
+const fs=require('fs');const page=fs.readFileSync(process.argv[1],'utf8');
+function extract(name){let start=page.indexOf(`function ${name}(`);let i=page.indexOf('{',start),depth=0;for(;i<page.length;i++){if(page[i]==='{')depth++;else if(page[i]==='}'&&--depth===0)return page.slice(start,i+1);}}
+const line=name=>{const s=page.indexOf(`const ${name}=`);return page.slice(s,page.indexOf(';\\n',s)+1).replace(/^const /,'var ');};
+eval(line('WORK_SETUP_STEP'));eval(line('WORK_SETUP_DETAIL'));
+var workSetupRate={bytes:0,at:0,speed:0,state:''};let now=1e12;Date.now=()=>now;
+const items=[0,1,2,3].map(()=>({dataset:{}}));
+const nodes={'w-setup-steps':{hidden:true,querySelectorAll:()=>items},'w-setup-bar':{hidden:true,setAttribute(){},querySelector:()=>({style:{}})}};
+const $=id=>nodes[id];
+eval(['workGigabytes','workDuration','workClock','workRate','workSetupSpeed','workSetupCopy','renderWorkSetupSteps'].map(extract).join('\\n'));
+const out={};
+const dl={state:'downloading_model',done_bytes:1e9,total_bytes:5e9};
+workSetupCopy(dl);now+=10000;out.slow=workSetupCopy({...dl,done_bytes:1e9+5e6})[2];
+now+=10000;workSetupRate={bytes:2e9,at:now-10000,speed:0,state:'downloading_model'};out.fast=workSetupCopy({...dl,done_bytes:2.2e9})[2];
+out.failed=workSetupCopy({state:'failed',reason:'network',detail:'size',retry_at:1800000000,attempts:2});
+renderWorkSetupSteps({state:'failed'},'model');out.steps=items.map(i=>i.dataset.state);
+renderWorkSetupSteps({state:'importing'},'prepare');out.importing=items.map(i=>i.dataset.state);
+process.stdout.write(JSON.stringify(out));
+"""
+        out = json.loads(subprocess.run(["node", "-e", script, page], capture_output=True, text=True, check=True).stdout)
+        self.assertIn("1.0 GB of 5.0 GB · 500 KB/s", out["slow"])
+        self.assertIn("slow connection: this can take a while, and you can leave this page", out["slow"])
+        self.assertIn("20.0 MB/s · about 2 min left", out["fast"])
+        self.assertNotIn("slow connection", out["fast"])
+        self.assertEqual(out["failed"][1], "The download stopped")
+        self.assertIn("What arrived is kept, and the next try resumes from there.", out["failed"][2])
+        self.assertIn("(attempt 3), or select Retry setup now.", out["failed"][2])
+        self.assertEqual(out["steps"], ["done", "failed", "", ""])
+        self.assertEqual(out["importing"], ["done", "done", "current", ""])
 
     def test_settings_card_explains_what_text_is_read(self):
         self.assertIn("id=work-insights-settings", self.page)

@@ -969,6 +969,7 @@ class WorkInsightsService:
         self.memory_probe = memory_probe or _default_memory_probe
         self.low_memory_strikes = 0
         self.last_call_at = 0.0
+        self.error_at = ""
         self.refill = refill
         self.recovered = recovered
         self.lock = threading.Lock()
@@ -1553,7 +1554,12 @@ class WorkInsightsService:
             try:
                 wait = self.step()
                 backoff = 1.0
-            except Exception:  # Supervisor: never let the worker die; record only a reason code.
+            except Exception as error:  # Supervisor: never let the worker die; record only where it failed.
+                site = error_site(error)
+                if site != self.error_at:
+                    # One line per new failure point, for support; never the message, which could hold text.
+                    print(f"work insights: internal error at {site}", file=sys.stderr, flush=True)
+                self.error_at = site
                 self._set(STATE_BACKOFF, "internal_error", backoff)
                 wait, backoff = backoff, min(300.0, backoff * 2)
             if wait > 0:
@@ -1594,6 +1600,7 @@ class WorkInsightsService:
             "queued": queued,
             "eta_s": int(pending / per_minute * 60) if pending and per_minute else 0,
             "retry_at": self.retry_at or None,
+            "error_at": self.error_at if self.reason == "internal_error" else "",
             "paused_until": settings["paused_until"],
             "model": settings["model"],
             "model_versions": len(mix),
@@ -1881,6 +1888,18 @@ def _remove_if_present(path):
         os.remove(path)
     except FileNotFoundError:
         pass
+
+
+def error_site(error):
+    """``ExceptionType at file.py:line`` of the innermost Token Meter frame; never the message."""
+    site = "?"
+    trace = error.__traceback__
+    while trace is not None:
+        name = trace.tb_frame.f_code.co_filename
+        if f"{os.sep}token_meter{os.sep}" in name:
+            site = f"{os.path.basename(name)}:{trace.tb_lineno}"
+        trace = trace.tb_next
+    return f"{type(error).__name__} at {site}"
 
 
 def _sysctl(name, ctype):

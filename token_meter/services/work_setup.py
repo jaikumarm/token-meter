@@ -6,12 +6,15 @@ runs as a per-user LaunchAgent bound to loopback.
 """
 
 import argparse
+import errno
 import hashlib
 import http.client
 import json
 import os
 import plistlib
 import shutil
+import socket
+import ssl
 import subprocess
 import sys
 import tarfile
@@ -65,15 +68,26 @@ IDLE, CHECKING, INSTALLING, STARTING, DOWNLOADING, IMPORTING, READY, FAILED = (
     "idle", "checking", "installing_ollama", "starting_ollama", "downloading_model", "importing", "ready", "failed")
 REASONS = ("network", "verify", "disk_space", "memory", "ollama_start", "ollama_offline", "import", "cancelled",
            "internal")
+# Bounded, content-free detail codes that say which check failed; shown on the Work page and in status.
+DETAILS = ("size", "hash", "archive", "signature", "http_status", "tls", "timeout", "connection", "curl",
+           "disk", "start_timeout", "import_failed", "")
+# A download is tried this many times (resuming each time) before setup fails; then curl gets one try.
+DOWNLOAD_ATTEMPTS = 3
+DOWNLOAD_RETRY_S = (5, 20)
+CURL = "/usr/bin/curl"
+# Failures a flaky network can cause are retried on their own, waiting longer each time.
+AUTO_RETRY_REASONS = ("network", "verify", "ollama_start")
+AUTO_RETRY_S = (60, 300, 900, 1800, 3600)
 # Loopback probes must never go through a system or environment HTTP proxy.
 _LOOPBACK_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 class SetupError(Exception):
-    def __init__(self, reason, needed_bytes=0):
+    def __init__(self, reason, needed_bytes=0, detail=""):
         super().__init__(reason)
         self.reason = reason if reason in REASONS else "internal"
         self.needed_bytes = needed_bytes
+        self.detail = detail if detail in DETAILS else ""
 
 
 def file_digest(path):
@@ -111,17 +125,17 @@ def safe_extract(archive, destination):
         for member in bundle.getmembers():
             name = os.path.normpath(member.name)
             if os.path.isabs(name) or name == ".." or name.startswith(".." + os.sep):
-                raise SetupError("verify")
+                raise SetupError("verify", detail="archive")
             target = os.path.join(root, name)
             parent = os.path.realpath(os.path.dirname(target))
             if not inside(parent) or os.path.islink(target):
-                raise SetupError("verify")
+                raise SetupError("verify", detail="archive")
             if member.isdir():
                 os.makedirs(target, mode=0o755, exist_ok=True)
             elif member.issym():
                 # Library aliases point at a sibling file; anything else could chain out of the folder.
                 if os.sep in member.linkname or member.linkname in ("", ".", ".."):
-                    raise SetupError("verify")
+                    raise SetupError("verify", detail="archive")
                 os.symlink(member.linkname, target)
             elif member.isfile():
                 os.makedirs(os.path.dirname(target), mode=0o755, exist_ok=True)
@@ -131,7 +145,7 @@ def safe_extract(archive, destination):
                 with os.fdopen(descriptor, "wb") as handle, source:
                     shutil.copyfileobj(source, handle, CHUNK)
             else:
-                raise SetupError("verify")
+                raise SetupError("verify", detail="archive")
 
 
 class WorkSetup:
@@ -139,7 +153,7 @@ class WorkSetup:
 
     def __init__(self, *, base_dir, cache_dir, launch_agents_dir, get_settings, set_ollama_url,
                  on_ready=lambda: None, opener=None, runner=subprocess.run, uid=None, sleep=time.sleep,
-                 disk_free=None, log=None, total_memory=None):
+                 disk_free=None, log=None, total_memory=None, auto_retry=True):
         self.base_dir = base_dir
         self.cache_dir = cache_dir
         self.plist_path = os.path.join(launch_agents_dir, AGENT_LABEL + ".plist")
@@ -153,13 +167,18 @@ class WorkSetup:
         self.sleep = sleep
         self.disk_free = disk_free or (lambda path: shutil.disk_usage(path).free)
         self.total_memory = total_memory or _total_memory
+        self.auto_retry = auto_retry
         self.log = log or (lambda message: None)
         self._lock = threading.Lock()
         self._thread = None
         self._cancel = threading.Event()
         self._restart = False
         self._winding_down = False  # the running thread has passed its restart check and will exit
-        self._state = {"state": IDLE, "reason": "", "done_bytes": 0, "total_bytes": 0, "needed_bytes": 0}
+        self._state = {"state": IDLE, "reason": "", "detail": "", "done_bytes": 0, "total_bytes": 0, "needed_bytes": 0,
+                       "retry_at": 0, "attempts": 0}
+        self._failures = 0
+        self._retry_now = threading.Event()
+        self.clock = time.time
 
     @property
     def binary(self):
@@ -176,8 +195,8 @@ class WorkSetup:
 
     def _set(self, state, **values):
         with self._lock:
-            self._state = {"state": state, "reason": "", "done_bytes": 0, "total_bytes": 0, "needed_bytes": 0,
-                           **values}
+            self._state = {"state": state, "reason": "", "detail": "", "done_bytes": 0, "total_bytes": 0,
+                           "needed_bytes": 0, "retry_at": 0, "attempts": self._failures, **values}
         self.log(state)
 
     def _progress(self, done):
@@ -188,6 +207,9 @@ class WorkSetup:
         """Run setup in the background unless it is already running; returns True when started."""
         with self._lock:
             if self._thread is not None and self._thread.is_alive() and not self._winding_down:
+                if self._state["state"] == FAILED and not self._cancel.is_set():
+                    self._retry_now.set()  # waiting to retry on its own: Retry setup runs it now
+                    return True
                 if self._cancel.is_set():
                     self._restart = True  # Turned off and on again before the old run reached a checkpoint.
                     return True
@@ -195,7 +217,9 @@ class WorkSetup:
             self._restart = False
             self._winding_down = False
             self._cancel.clear()
-            self._state = {"state": CHECKING, "reason": "", "done_bytes": 0, "total_bytes": 0, "needed_bytes": 0}
+            self._retry_now.clear()
+            self._state = {"state": CHECKING, "reason": "", "detail": "", "done_bytes": 0, "total_bytes": 0,
+                           "needed_bytes": 0, "retry_at": 0, "attempts": self._failures}
             self._thread = threading.Thread(target=self._run_safely, name="work-setup", daemon=True)
             self._thread.start()
             return True
@@ -204,6 +228,7 @@ class WorkSetup:
         """Stop a running setup at its next checkpoint, waiting briefly for it to finish."""
         with self._lock:
             self._cancel.set()
+            self._retry_now.set()  # also ends a wait for an automatic retry
             self._restart = False  # A later off overrides an earlier off-then-on.
         thread = self._thread
         if thread is not None and thread.is_alive() and thread is not threading.current_thread():
@@ -223,21 +248,42 @@ class WorkSetup:
                 self._winding_down = not restart
                 if restart:
                     self._cancel.clear()
-                    self._state = {"state": CHECKING, "reason": "", "done_bytes": 0, "total_bytes": 0,
-                                   "needed_bytes": 0}
+                    self._retry_now.clear()
+                    self._state = {"state": CHECKING, "reason": "", "detail": "", "done_bytes": 0, "total_bytes": 0,
+                                   "needed_bytes": 0, "retry_at": 0, "attempts": self._failures}
             if restart:
                 self._run_safely()
 
     def _run_once(self):
-        try:
-            self.run()
-        except SetupError as error:
-            if error.reason == "cancelled":
-                self._set(IDLE)
-            else:
-                self._set(FAILED, reason=error.reason, needed_bytes=error.needed_bytes)
-        except Exception:
-            self._set(FAILED, reason="internal")
+        """Run setup; a failure a flaky network can cause is retried on its own, waiting longer each time."""
+        while True:
+            try:
+                self.run()
+                self._failures = 0
+                return
+            except SetupError as error:
+                if error.reason == "cancelled":
+                    self._set(IDLE)
+                    return
+                self._failures += 1
+                retry = (self.auto_retry and error.reason in AUTO_RETRY_REASONS
+                         and self.get_settings().get("enabled", True))
+                wait = AUTO_RETRY_S[min(self._failures - 1, len(AUTO_RETRY_S) - 1)] if retry else 0
+                self._set(FAILED, reason=error.reason, needed_bytes=error.needed_bytes, detail=error.detail,
+                          retry_at=int(self.clock() + wait) if retry else 0, attempts=self._failures)
+                self.log(f"failed {error.reason} {error.detail or '-'}")
+                if not retry:
+                    return
+                # Retry setup or turning Work insights off (cancel) ends the wait at once.
+                self._retry_now.wait(wait)
+                self._retry_now.clear()
+                if self._cancel.is_set() or not self.get_settings().get("enabled", True):
+                    self._set(IDLE)
+                    return
+            except Exception as error:
+                self._set(FAILED, reason="internal", detail="")
+                self.log(f"failed internal {type(error).__name__} {_error_site(error)}")
+                return
 
     def run(self):
         settings = self.get_settings()
@@ -312,7 +358,7 @@ class WorkSetup:
                 self.sleep(0.5)
             else:
                 self.stop_agent()
-                raise SetupError("ollama_start")
+                raise SetupError("ollama_start", detail="start_timeout")
         self._checkpoint()
         if configured != MANAGED_URL:
             self.set_ollama_url(MANAGED_URL)
@@ -353,7 +399,7 @@ class WorkSetup:
                 with open(path, "rb") as handle:
                     magic = handle.read(4)
                 if magic in MACHO_MAGIC and not self._signed_by_ollama(path):
-                    raise SetupError("verify")
+                    raise SetupError("verify", detail="signature")
 
     def _install_ollama(self):
         final = os.path.dirname(self.binary)
@@ -369,10 +415,10 @@ class WorkSetup:
         try:
             safe_extract(archive, partial)
             self._verify_bundle(partial)
-        except (tarfile.TarError, OSError, SetupError):
+        except (tarfile.TarError, OSError, SetupError) as error:
             shutil.rmtree(partial, ignore_errors=True)
             os.remove(archive)  # A retry downloads it again rather than repeating the same failure.
-            raise SetupError("verify") from None
+            raise SetupError("verify", detail=getattr(error, "detail", "") or "archive") from None
         shutil.rmtree(final, ignore_errors=True)
         os.replace(partial, final)
         os.remove(archive)
@@ -428,7 +474,34 @@ class WorkSetup:
     # Classifier model
 
     def _download(self, url, destination, size, digest, offset):
-        """Resumable download that must match ``size`` and ``digest``; progress adds to ``offset``."""
+        """Resumable download that must match ``size`` and ``digest``; progress adds to ``offset``.
+
+        Tried DOWNLOAD_ATTEMPTS times, resuming each time; if it still fails, curl gets one try, because some
+        networks treat it differently from Python. Every copy must match the same pinned size and hash.
+        """
+        last = None
+        for attempt in range(DOWNLOAD_ATTEMPTS):
+            self._checkpoint()
+            try:
+                self._download_once(url, destination, size, digest, offset)
+                return
+            except SetupError as error:
+                if error.reason not in ("network", "verify"):
+                    raise
+                last = error
+            if attempt < DOWNLOAD_ATTEMPTS - 1:
+                self.sleep(DOWNLOAD_RETRY_S[min(attempt, len(DOWNLOAD_RETRY_S) - 1)])
+        self._checkpoint()
+        if os.path.exists(CURL):
+            try:
+                self._download_with_curl(url, destination, size, digest, offset)
+                return
+            except SetupError as error:
+                if error.reason not in ("network", "verify"):
+                    raise
+        raise last
+
+    def _download_once(self, url, destination, size, digest, offset):
         if verified(destination, size, digest):
             self._progress(offset + size)
             return
@@ -450,11 +523,44 @@ class WorkSetup:
                         if done > size:
                             break
                         self._progress(offset + done)
-        except (OSError, urllib.error.URLError, http.client.HTTPException):
-            raise SetupError("network") from None
-        if not verified(destination, size, digest):
-            os.remove(destination)
-            raise SetupError("verify")
+        except urllib.error.HTTPError:
+            raise SetupError("network", detail="http_status") from None
+        except (ssl.SSLError, ssl.CertificateError):
+            raise SetupError("network", detail="tls") from None
+        except urllib.error.URLError as error:
+            reason = getattr(error, "reason", None)
+            detail = "tls" if isinstance(reason, ssl.SSLError) else "timeout" if isinstance(reason, socket.timeout) \
+                else "connection"
+            raise SetupError("network", detail=detail) from None
+        except socket.timeout:
+            raise SetupError("network", detail="timeout") from None
+        except OSError as error:
+            raise SetupError("disk" if error.errno == errno.ENOSPC else "network",
+                             detail="disk" if error.errno == errno.ENOSPC else "connection") from None
+        except http.client.HTTPException:
+            raise SetupError("network", detail="connection") from None
+        self._check_download(destination, size, digest)
+
+    def _check_download(self, destination, size, digest):
+        actual = os.path.getsize(destination) if os.path.exists(destination) else 0
+        if actual == size and file_digest(destination) == digest:
+            return
+        if actual < size:
+            raise SetupError("network", detail="size")  # cut short: the next try resumes from here
+        os.remove(destination)
+        raise SetupError("verify", detail="size" if actual != size else "hash")
+
+    def _download_with_curl(self, url, destination, size, digest, offset):
+        try:
+            result = self.runner([CURL, "--fail", "--location", "--silent", "--show-error", "--continue-at", "-",
+                                  "--retry", "2", "--connect-timeout", "30", "--output", destination, url],
+                                 capture_output=True, text=True, timeout=6 * 3600)
+        except (OSError, subprocess.SubprocessError):
+            raise SetupError("network", detail="curl") from None
+        if result.returncode not in (0, 33):  # 33: the server cannot resume a file that is already complete
+            raise SetupError("network", detail="curl")
+        self._check_download(destination, size, digest)
+        self._progress(offset + size)
 
     def _download_model(self):
         for name in os.listdir(self.cache_dir) if os.path.isdir(self.cache_dir) else ():
@@ -489,7 +595,7 @@ class WorkSetup:
         except (OSError, subprocess.SubprocessError):
             raise SetupError("import") from None
         if result.returncode != 0 or not self._has_model(url, model):
-            raise SetupError("import")
+            raise SetupError("import", detail="import_failed")
 
     def _retire(self, cli, url, model):
         """Remove models earlier versions installed, from Token Meter's own Ollama only."""
@@ -509,6 +615,18 @@ def _total_memory():
         return os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
     except (AttributeError, ValueError, OSError):
         return None
+
+
+def _error_site(error):
+    """``file.py:line`` of the innermost Token Meter frame: where it failed, never what it was working on."""
+    site = ""
+    trace = error.__traceback__
+    while trace is not None:
+        name = trace.tb_frame.f_code.co_filename
+        if f"{os.sep}token_meter{os.sep}" in name:
+            site = f"{os.path.basename(name)}:{trace.tb_lineno}"
+        trace = trace.tb_next
+    return site or "?"
 
 
 def default_paths(home=None):

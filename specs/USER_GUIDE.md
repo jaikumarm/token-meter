@@ -588,6 +588,20 @@ lsof -nP -iTCP:8722 -sTCP:LISTEN
 Stop only the process you recognize, then rerun the installer or foreground
 server. Do not start multiple Token Meter servers on the same port.
 
+### Work insights setup keeps retrying
+
+The Work page shows the setup step, download progress and speed, and the
+reason for a stop, and setup retries a dropped download on its own. For more
+detail, this prints the state, reason and detail codes, and the Ollama
+versions, with no prompts or file contents:
+
+```bash
+curl -s http://127.0.0.1:8722/work-insights/status | python3 -m json.tool; curl -s -m 3 http://127.0.0.1:11434/api/version; echo; curl -s -m 3 http://127.0.0.1:11435/api/version; echo; grep "work setup\|work insights" ~/Library/Application\ Support/Token\ Meter/runtime/meter.err.log | tail -20
+```
+
+An Ollama older than 0.34 on the default address is replaced by Token Meter's
+own; upgrading it (`brew upgrade ollama`) lets Token Meter use it instead.
+
 ### No logs were found
 
 Start a normal supported agent session and reload. Confirm the runtime uses its

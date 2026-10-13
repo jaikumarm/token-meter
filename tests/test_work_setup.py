@@ -6,6 +6,8 @@ import plistlib
 import shutil
 import tarfile
 import tempfile
+import threading
+import time
 import unittest
 from unittest import mock
 
@@ -71,7 +73,8 @@ class WorkSetupTests(unittest.TestCase):
                            launch_agents_dir=os.path.join(self.tmp.name, "agents"), get_settings=lambda: dict(self.settings),
                            set_ollama_url=set_url, opener=self.opener, runner=self.runner, uid=501,
                            sleep=lambda s: None, disk_free=kwargs.pop("disk_free", lambda p: 10 ** 13),
-                           total_memory=kwargs.pop("total_memory", lambda: 32 * 1024 ** 3), **kwargs)
+                           total_memory=kwargs.pop("total_memory", lambda: 32 * 1024 ** 3),
+                           auto_retry=kwargs.pop("auto_retry", False), **kwargs)
 
     def small_model(self):
         files = []
@@ -136,6 +139,104 @@ class WorkSetupTests(unittest.TestCase):
         self.assertEqual(caught.exception.reason, "verify")
         self.assertFalse(os.path.exists(setup.binary))
         self.assertFalse(os.listdir(os.path.join(self.tmp.name, "cache")))
+
+    def test_a_dropped_connection_resumes_and_finishes_on_the_next_try(self):
+        with self.ollama_archive(), mock.patch.object(S, "CLI_CANDIDATES", ()):
+            data = self.files[S.OLLAMA_ARCHIVE_URL]
+            served = []
+
+            def flaky(request, timeout=0):
+                if request.full_url == S.OLLAMA_ARCHIVE_URL:
+                    start = int(request.headers.get("Range", "bytes=0-")[6:-1] or 0)
+                    served.append(start)
+                    if len(served) == 1:
+                        return FakeResponse(data[:len(data) // 2])  # the connection drops half way
+                    return FakeResponse(data[start:], status=206)
+                return self.opener(request, timeout)
+            setup = self.make()
+            setup.opener = flaky
+            setup._install_ollama()
+        self.assertEqual(served, [0, len(data) // 2])  # the second try resumed where the first stopped
+        self.assertTrue(os.path.isfile(setup.binary))
+
+    def test_a_download_python_cannot_get_right_is_fetched_once_with_curl(self):
+        with self.ollama_archive(), mock.patch.object(S, "CLI_CANDIDATES", ()):
+            good = self.files[S.OLLAMA_ARCHIVE_URL]
+            self.files[S.OLLAMA_ARCHIVE_URL] = b"<html>blocked by the network</html>".ljust(len(good), b" ")
+            original = self.runner
+
+            def runner(command, **kwargs):
+                if command[0] == S.CURL:
+                    with open(command[command.index("--output") + 1], "wb") as handle:
+                        handle.write(good)
+                    self.commands.append(command)
+                    return Run()
+                return original(command, **kwargs)
+            setup = self.make()
+            setup.runner = runner
+            setup._install_ollama()
+        attempts = [u for u in self.urls if u == S.OLLAMA_ARCHIVE_URL]
+        self.assertEqual(len(attempts), S.DOWNLOAD_ATTEMPTS)
+        self.assertEqual(sum(1 for c in self.commands if c[0] == S.CURL), 1)
+        self.assertTrue(os.path.isfile(setup.binary))
+
+    def test_a_download_that_never_matches_says_which_check_failed(self):
+        with self.ollama_archive(), mock.patch.object(S, "CLI_CANDIDATES", ()):
+            self.files[S.OLLAMA_ARCHIVE_URL] = b"y" * S.OLLAMA_ARCHIVE_SIZE
+            setup = self.make()
+            setup._run_safely()
+        status = setup.status()
+        self.assertEqual((status["state"], status["reason"], status["detail"]), (S.FAILED, "verify", "hash"))
+        self.assertEqual(status["retry_at"], 0)  # tests turn automatic retries off
+
+    def test_network_errors_carry_a_detail_code(self):
+        import socket
+        import ssl
+        import urllib.error
+        for raised, detail in ((urllib.error.URLError(ssl.SSLError("bad cert")), "tls"),
+                               (urllib.error.URLError(socket.timeout("slow")), "timeout"),
+                               (urllib.error.URLError(ConnectionRefusedError()), "connection"),
+                               (urllib.error.HTTPError(S.OLLAMA_ARCHIVE_URL, 403, "no", {}, None), "http_status"),
+                               (socket.timeout("slow"), "timeout")):
+            setup = self.make()
+
+            def opener(request, timeout=0, raised=raised):
+                raise raised
+            setup.opener = opener
+            with self.assertRaises(S.SetupError) as caught:
+                setup._download_once(S.OLLAMA_ARCHIVE_URL, os.path.join(self.tmp.name, "f"), 10, "sha256:x", 0)
+            self.assertEqual((caught.exception.reason, caught.exception.detail), ("network", detail), raised)
+
+    def test_a_network_failure_is_retried_on_its_own_and_retry_setup_skips_the_wait(self):
+        with self.ollama_archive(), mock.patch.object(S, "CLI_CANDIDATES", ()), \
+                mock.patch.object(S, "AUTO_RETRY_S", (3600,)):
+            data = self.files.pop(S.OLLAMA_ARCHIVE_URL)  # the network is down at first
+            setup = self.make(auto_retry=True)
+            setup.start()
+            for _ in range(200):
+                if setup.status()["state"] == S.FAILED and setup.status()["retry_at"]:
+                    break
+                threading.Event().wait(0.01)
+            status = setup.status()
+            self.assertEqual((status["state"], status["reason"], status["attempts"]), (S.FAILED, "network", 1))
+            self.assertGreater(status["retry_at"], time.time() + 3000)
+            self.files[S.OLLAMA_ARCHIVE_URL] = data  # the network is back
+            self.ollama["http://127.0.0.1:11434"] = {"version": "0.34.4", "models": ["token-meter-gemma:latest"]}
+            self.assertTrue(setup.start())  # Retry setup ends the one-hour wait
+            setup._thread.join(10)
+        self.assertEqual(setup.status()["state"], S.READY)
+
+    def test_turning_work_insights_off_ends_a_wait_for_a_retry(self):
+        with mock.patch.object(S, "CLI_CANDIDATES", ()), mock.patch.object(S, "AUTO_RETRY_S", (3600,)):
+            setup = self.make(auto_retry=True)
+            setup.start()
+            for _ in range(200):
+                if setup.status()["retry_at"]:
+                    break
+                threading.Event().wait(0.01)
+            setup.cancel(wait_s=5)
+        self.assertFalse(setup._thread.is_alive())
+        self.assertEqual(setup.status()["state"], S.IDLE)
 
     def test_unsigned_binary_is_rejected(self):
         def runner(command, **kwargs):

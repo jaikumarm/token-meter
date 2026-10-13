@@ -66,9 +66,28 @@ background; it also runs at server start while enabled.
 Loopback probes never use an HTTP proxy. Turning Work insights off cancels a
 running setup at its next checkpoint and stops the managed Ollama; turning it
 back on while the old run winds down restarts setup only if it is still on.
-Status exposes a state, a reason code, byte counts, whether the Ollama is
-managed, and the pinned version; no paths or error text. Uninstall removes
-the managed Ollama, its model, and leftover setup downloads.
+Downloads are built for weak connections. Each file (the Ollama archive and
+the model) is tried three times, resuming where it stopped, and then once
+with `/usr/bin/curl`, which some networks treat differently from Python;
+every copy must still match the pinned size and SHA-256. A file that arrives
+short is kept so the next try resumes; one that is the wrong size or hash is
+deleted. A network, download-check, or Ollama-start failure is then retried on
+its own after 1, 5, 15, 30, and then every 60 minutes while Work insights are
+on; **Retry setup** skips the wait, and turning Work insights off ends it.
+
+Status exposes a state, a reason code, a detail code that says which check
+failed (`size`, `hash`, `archive`, `signature`, `http_status`, `tls`,
+`timeout`, `connection`, `curl`, `disk`, `start_timeout`, `import_failed`),
+byte counts, the next automatic retry and the attempt count, whether the
+Ollama is managed, and the pinned version; no paths or error text. The Work
+page turns these into steps (Ollama, model download, prepare, label), a
+progress bar, the download speed and time left, a note on slow connections,
+and a plain reason with the next retry time. Setup writes each state and
+failure (reason and detail code) to the server's error log
+(`meter.err.log`). When the labeling worker hits an unexpected error, status
+and the log name the exception type and the innermost Token Meter
+`file:line`, never its message. Uninstall removes the managed Ollama, its
+model, and leftover setup downloads.
 
 ## 2. Requests: cost and what happened
 
