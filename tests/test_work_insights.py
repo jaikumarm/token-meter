@@ -1857,6 +1857,34 @@ process.stdout.write(JSON.stringify(out));
         self.assertLess(self.page.index("let pendingSettingsScroll=null;"), self.page.index("function applyHashRoute("))
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_work_settings_save_is_live_only_with_unsaved_changes(self):
+        page_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "page.html")
+        script = """
+const fs=require('fs');const page=fs.readFileSync(process.argv[1],'utf8');
+function extract(name){let start=page.indexOf(`function ${name}(`);let i=page.indexOf('{',start),depth=0;for(;i<page.length;i++){if(page[i]==='{')depth++;else if(page[i]==='}'&&--depth===0)return page.slice(start,i+1);}}
+const nodes={'work-model':{value:'token-meter-gemma'},'work-url':{value:'http://127.0.0.1:11434'},'work-save':{disabled:false}};const $=id=>nodes[id];
+var WORK_SETTINGS={settings:{model:'token-meter-gemma',ollama_url:'http://127.0.0.1:11434',areas:[{name:'A',description:'a',extra:1}]}};
+var workAreasDraft=[{name:'A',description:'a'}];
+eval(['workSettingsDraft','workSettingsDirty','updateWorkSaveState'].map(extract).join('\\n'));
+const out=[];const check=()=>{updateWorkSaveState();out.push(nodes['work-save'].disabled);};
+check();
+nodes['work-model'].value='other';check();
+nodes['work-model'].value='token-meter-gemma ';check();
+workAreasDraft[0].description='b';check();
+workAreasDraft[0].description='a';workAreasDraft.push({name:'',description:''});check();
+workAreasDraft.pop();check();
+WORK_SETTINGS=null;check();
+process.stdout.write(JSON.stringify(out));
+"""
+        out = json.loads(subprocess.run(["node", "-e", script, page_path], capture_output=True, text=True,
+                                        check=True).stdout)
+        # disabled when saved; live after a change; trailing spaces are not a change; areas count; null = disabled
+        self.assertEqual(out, [True, False, True, False, False, True, True])
+        with open(page_path, encoding="utf-8") as handle:
+            page = handle.read()
+        self.assertIn("<button class=tbtn id=work-save type=button disabled>Save changes</button>", page)
+        self.assertIn('<div class="workActionGroup workSettingsManage">', page)
+
     def test_effort_by_model_renders_one_model_with_verdicts_and_thin_cells(self):
         page = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "page.html")
         script = """

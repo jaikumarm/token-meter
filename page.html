@@ -1359,6 +1359,12 @@ body.spectrumApp .spectrumPageHead h1{background:linear-gradient(100deg,var(--fg
 .workSettingsGrid .settingsField>span{font-size:var(--fs-11);color:var(--faint);font-weight:var(--fw-heavy);text-transform:uppercase}
 .workSetupHint{margin-top:10px;color:var(--dim);font-size:var(--fs-11)}
 .workSetupHint code{padding:2px 6px;border-radius:var(--radius-sm);background:rgb(var(--tint-rgb)/.06);color:var(--fg)}
+.workSettingsActions{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:12px;margin-top:12px}
+.workActionGroup{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.workSettingsActions .settingsStatus{width:auto;min-width:0;text-align:right}
+.workSettingsActions .tbtn,.workSettingsManage .tbtn,.workSettingsManage .filterSelect{height:32px;padding-top:0;padding-bottom:0}
+.workSettingsActions .tbtn:disabled{opacity:.45;cursor:not-allowed}
+.workSettingsManage{margin-top:16px;padding-top:12px;border-top:1px solid var(--line)}
 .workAreasHead{display:flex;align-items:baseline;gap:10px;margin-top:16px}
 .workAreasHead h3{margin:0;font-size:var(--fs-13)}
 .workAreas{display:grid;gap:6px;margin-top:8px}
@@ -3465,7 +3471,8 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     <div class=workSetupHint>Turning this on sets everything up in the background: Token Meter installs a pinned Ollama if this Mac doesn’t have one, downloads Google’s Gemma 4 E4B model (about 5 GB, Apache-2.0), adds it to Ollama, and deletes the download. It needs about 11 GB free while it sets up and about 5 GB after, and uses about 5.5 GB of memory while it labels.</div>
     <div class=workAreasHead><h3>Areas</h3><span class=subline id=work-areas-count></span></div>
     <div class=workAreas id=work-areas></div>
-    <div class=settingsActions><button class=tbtn id=work-area-add type=button>Add area</button><button class=tbtn id=work-save type=button>Save</button><button class="tbtn clearFilters" id=work-areas-reset type=button>Restore default areas</button><label class=workPause><span class=workSrOnly>Pause work insights</span><select class=filterSelect id=work-pause aria-label="Pause work insights"><option value="">Pause…</option><option value=1h>Pause for 1 hour</option><option value=tomorrow>Pause until tomorrow</option><option value=indefinite>Pause until resumed</option><option value=resume>Resume</option></select></label><button class="tbtn clearFilters" id=work-clear type=button>Delete all labels</button><span class=settingsStatus id=work-settings-status>Saved locally.</span></div>
+    <div class=workSettingsActions><div class=workActionGroup><button class=tbtn id=work-area-add type=button>Add area</button><button class="tbtn clearFilters" id=work-areas-reset type=button>Restore default areas</button></div><span class=settingsStatus id=work-settings-status aria-live=polite>Saved locally.</span><button class=tbtn id=work-save type=button disabled>Save changes</button></div>
+    <div class="workActionGroup workSettingsManage"><label class=workPause><span class=workSrOnly>Pause work insights</span><select class=filterSelect id=work-pause aria-label="Pause work insights"><option value="">Pause…</option><option value=1h>Pause for 1 hour</option><option value=tomorrow>Pause until tomorrow</option><option value=indefinite>Pause until resumed</option><option value=resume>Resume</option></select></label><button class="tbtn clearFilters" id=work-clear type=button>Delete all labels</button></div>
    </section>
    <section class="card pad" id=delivery-settings>
     <div class=learnSectionHead><div><h2>Git evidence history</h2><div class=subline>Reads local pushes every five minutes. Clear starts a new baseline; older reflogs stay excluded.</div></div><button class="tbtn clearFilters" id=delivery-clear type=button>Clear Git evidence</button></div>
@@ -8590,18 +8597,29 @@ function renderWorkSettings(payload,{force=false}={}){
  const settings=payload.settings||{},status=payload.status||{};
  const badge=status.reason==='delete_pending'?'Delete pending':({disabled:'Off',setup_needed:'Setup needed',running:'Running',idle:'Up to date',paused:'Paused',throttled:'Waiting',backoff:'Retrying',storage_error:'Error'}[settings.enabled?status.state:'disabled']||'On');
  $('work-settings-badge').textContent=badge;
- if(!force&&settingsInteractionActive())return;
+ if(!force&&settingsInteractionActive()){updateWorkSaveState();return;}
  $('work-enable-cta').hidden=Boolean(settings.enabled);
  $('work-enabled').checked=Boolean(settings.enabled);$('work-battery').checked=settings.pause_on_battery!==false;$('work-live-notify').checked=settings.live_notifications!==false;$('work-live-notify').disabled=!settings.enabled;$('work-live-notify').closest('label').title=settings.enabled?'':'Turn on labeling to get live-suggestion notifications.';
  $('work-model').value=settings.model||'';$('work-url').value=settings.ollama_url||'';
  $('work-rate').value=String(settings.rate_per_minute||5);$('work-backfill').value=String(settings.backfill_days??90);
  workAreasDraft=(settings.areas||[]).map(area=>({...area}));renderWorkAreas();
 }
+function workSettingsDraft(){
+ return {model:$('work-model').value.trim(),ollama_url:$('work-url').value.trim(),areas:(workAreasDraft||[]).map(area=>({name:area.name.trim(),description:area.description.trim()}))};
+}
+// Save covers the model, address, and areas; it is live only when one of them differs from what is saved.
+function workSettingsDirty(){
+ const saved=WORK_SETTINGS?.settings||{},draft=workSettingsDraft();
+ const savedAreas=(saved.areas||[]).map(area=>({name:area.name,description:area.description}));
+ return draft.model!==(saved.model||'')||draft.ollama_url!==(saved.ollama_url||'')||JSON.stringify(draft.areas)!==JSON.stringify(savedAreas);
+}
+function updateWorkSaveState(){$('work-save').disabled=!WORK_SETTINGS||!workSettingsDirty();}
 function renderWorkAreas(){
  const limits=WORK_SETTINGS?.settings?.limits||{min_areas:2,max_areas:8,name:40,description:200},areas=workAreasDraft||[];
  $('work-areas').innerHTML=areas.map((area,index)=>`<div class=workAreaRow><i class=workSwatch style="--swatch:${index<8?`var(--w${index+1})`:'var(--w-unclear)'}"></i><input data-area-index=${index} data-area-field=name value="${esc(area.name)}" maxlength=${limits.name} aria-label="Area ${index+1} name"><input data-area-index=${index} data-area-field=description value="${esc(area.description)}" maxlength=${limits.description} aria-label="Area ${index+1} description"><button class="tbtn clearFilters" type=button data-area-remove=${index} ${areas.length<=limits.min_areas?'disabled':''} aria-label="Remove area ${index+1}">Remove</button></div>`).join('');
  $('work-areas-count').textContent=`${areas.length} of ${limits.max_areas} · changing areas relabels them in the background`;
  $('work-area-add').disabled=areas.length>=limits.max_areas;
+ updateWorkSaveState();
 }
 async function loadWorkSettings(){
  try{const response=await fetch('/work-insights/status',{cache:'no-store'});const payload=await response.json();if(payload.ok)renderWorkSettings(payload);}catch(error){}
@@ -8615,7 +8633,8 @@ async function saveWorkSettings(payload,message){
   workLastLoadedAt=0;
  }catch(error){$('work-settings-status').textContent=error.message;}
 }
-$('work-areas').addEventListener('input',event=>{const input=event.target.closest('[data-area-index]');if(!input||!workAreasDraft)return;workAreasDraft[Number(input.dataset.areaIndex)][input.dataset.areaField]=input.value;});
+$('work-areas').addEventListener('input',event=>{const input=event.target.closest('[data-area-index]');if(!input||!workAreasDraft)return;workAreasDraft[Number(input.dataset.areaIndex)][input.dataset.areaField]=input.value;updateWorkSaveState();});
+['work-model','work-url'].forEach(id=>$(id).addEventListener('input',updateWorkSaveState));
 $('work-areas').addEventListener('click',event=>{const button=event.target.closest('[data-area-remove]');if(!button||!workAreasDraft)return;workAreasDraft.splice(Number(button.dataset.areaRemove),1);renderWorkAreas();});
 $('work-area-add').addEventListener('click',()=>{if(!workAreasDraft)return;workAreasDraft.push({name:'',description:''});renderWorkAreas();$('work-areas').querySelector('.workAreaRow:last-child input')?.focus();});
 $('work-enable-button').addEventListener('click',()=>{const box=$('work-enabled');box.checked=true;box.dispatchEvent(new Event('change'));$('work-enable-cta').hidden=true;box.focus();});
@@ -8624,7 +8643,7 @@ $('work-battery').addEventListener('change',event=>saveWorkSettings({pause_on_ba
 $('work-live-notify').addEventListener('change',event=>saveWorkSettings({live_notifications:event.target.checked}));
 $('work-rate').addEventListener('change',event=>saveWorkSettings({rate_per_minute:Number(event.target.value)}));
 $('work-backfill').addEventListener('change',event=>saveWorkSettings({backfill_days:Number(event.target.value)}));
-$('work-save').addEventListener('click',()=>saveWorkSettings({model:$('work-model').value.trim(),ollama_url:$('work-url').value.trim(),areas:(workAreasDraft||[]).map(area=>({name:area.name.trim(),description:area.description.trim()}))}));
+$('work-save').addEventListener('click',()=>{if(workSettingsDirty())saveWorkSettings(workSettingsDraft());});
 $('work-areas-reset').addEventListener('click',()=>saveWorkSettings({reset_areas:true},'Default areas restored.'));
 $('work-pause').addEventListener('change',async event=>{
  const duration=event.target.value;if(!duration)return;
