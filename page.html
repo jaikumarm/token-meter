@@ -8344,7 +8344,8 @@ function workEffortVerdict(verdict){
 function renderWorkEffortModels(insights){
  const data=insights?.effort_by_model||{},models=data.models||[],box=$('w-effort-models');
  box.hidden=!insights;
- const key=model=>`${model.model}\u0000${model.runtime}`;
+ // JSON rather than a NUL-joined key: the HTML parser rewrites NUL inside attributes.
+ const key=model=>JSON.stringify([model.model,model.runtime]);
  const chosen=models.find(model=>key(model)===workEffortModel)||models[0];
  $('w-effort-model-chips').innerHTML=models.map(model=>`<button type=button class=chip data-effort-model="${esc(key(model))}" aria-pressed=${model===chosen}>${esc(model.model)} · ${esc(model.runtime)}</button>`).join('');
  const unrecorded=data.unrecorded_spend>0?`${money(data.unrecorded_spend)} of labeled spend in this period has no recorded effort and is left out; Claude records effort only when one is set.`:'';

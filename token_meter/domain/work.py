@@ -837,7 +837,8 @@ def _effort_by_model(requests):
         if r["complexity"] not in COMPLEXITY_OF:
             continue  # not labeled yet: it cannot land in a cell
         key = (r["model"], r["runtime"])
-        if r["effort"] in EFFORT_RANK:  # Codex "none" is a real setting: no extra reasoning
+        # "none" is a real setting (no extra reasoning), so it counts as a recorded level.
+        if r["effort"] in EFFORT_RANK:
             by_model[key].append(r)
         else:
             unrecorded[key] += r["cost"]

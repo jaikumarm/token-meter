@@ -1861,7 +1861,7 @@ process.stdout.write(JSON.stringify(out));
 const fs=require('fs');const page=fs.readFileSync(process.argv[1],'utf8');
 function extract(name){let start=page.indexOf(`function ${name}(`);let i=page.indexOf('{',start),depth=0;for(;i<page.length;i++){if(page[i]==='{')depth++;else if(page[i]==='}'&&--depth===0)return page.slice(start,i+1);}}
 const nodes={};const $=id=>nodes[id]||(nodes[id]={innerHTML:'',textContent:'',hidden:false,style:{}});
-const esc=s=>String(s),f=v=>String(v),money=v=>'$'+Number(v).toFixed(2);
+const escAt=page.indexOf('const esc=');eval(page.slice(escAt,page.indexOf(';\\n',escAt)+1).replace(/^const /,'var '));const f=v=>String(v),money=v=>'$'+Number(v).toFixed(2);
 var workEffortModel='';const WORK_EFFORT_ROWS={routine:'Routine',everyday:'Everyday',complex:'Complex+'};
 eval(['workEffortRate','workEffortVerdict','renderWorkEffortModels'].map(extract).join('\\n'));
 const cell=(effort,requests,rate,samples,few)=>({effort,requests,cost_per_request:requests?0.5:null,rework:samples?{rate,samples,few_samples:few}:null});
@@ -1869,6 +1869,11 @@ const model={model:'gpt',runtime:'Codex',efforts:['high','xhigh'],verdicts:[{kin
  rows:[{complexity:'routine',cells:[cell('high',3,0,2,true),cell('xhigh',0)]},{complexity:'everyday',cells:[cell('high',269,.09,197,false),cell('xhigh',752,.16,591,false)]},{complexity:'complex',cells:[cell('high',0),cell('xhigh',0)]}]};
 renderWorkEffortModels({effort_by_model:{models:[model,{...model,model:'other',verdicts:[]}],unrecorded_spend:12.5}});
 const out={grid:$('w-effort-grid').innerHTML,verdicts:$('w-effort-verdicts').innerHTML,note:$('w-effort-note').textContent,chips:$('w-effort-model-chips').innerHTML,cols:$('w-effort-grid').style.gridTemplateColumns};
+// Choosing the second model: the key in its chip must round-trip through HTML and localStorage.
+const chip=$('w-effort-model-chips').innerHTML.split('<button').find(part=>part.includes('>other · Codex'));
+const attr=chip.match(/data-effort-model="([^"]*)"/)[1].replace(/&quot;/g,'"');
+workEffortModel=attr;renderWorkEffortModels({effort_by_model:{models:[model,{...model,model:'other',verdicts:[]}],unrecorded_spend:12.5}});
+out.switched=$('w-effort-model-chips').innerHTML;out.switchedVerdicts=$('w-effort-verdicts').innerHTML;
 renderWorkEffortModels({effort_by_model:{models:[],unrecorded_spend:0}});out.empty=$('w-effort-grid').innerHTML;
 process.stdout.write(JSON.stringify(out));
 """
@@ -1879,9 +1884,12 @@ process.stdout.write(JSON.stringify(out));
         self.assertIn("data-empty", out["grid"])
         self.assertIn("<b>xhigh → high looks safe</b>. Pushback 9% at high vs 16% at xhigh, from 197 and 591", out["verdicts"])
         self.assertIn("$720.25 over this period", out["verdicts"])
-        self.assertIn("$12.50 of spend in this period has no recorded effort", out["note"])
+        self.assertIn("$12.50 of labeled spend in this period has no recorded effort", out["note"])
         self.assertIn('aria-pressed=true>gpt · Codex', out["chips"])
         self.assertIn("No reasoning effort was recorded", out["empty"])
+        self.assertIn('aria-pressed=true>other · Codex', out["switched"])
+        self.assertIn("No call yet", out["switchedVerdicts"])
+        self.assertNotIn("\\u0000", self.page[self.page.index("function renderWorkEffortModels("):][:600])
 
     def test_current_session_hints_keep_their_styles(self):
         # A merge once dropped these with an unrelated deleted block; the markup alone does not show it.
