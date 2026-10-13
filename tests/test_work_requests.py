@@ -327,12 +327,38 @@ class EffortByModelTests(unittest.TestCase):
                          [("raise", "complex", "low", "medium")])
 
     def test_a_cheaper_level_with_no_worse_pushback_is_safe_to_lower(self):
-        rows = (self.requests("gpt", "Codex", "routine", "medium", 80, 2, 0.04)
-                + self.requests("gpt", "Codex", "routine", "high", 80, 3, 0.09))
+        rows = (self.requests("gpt", "Codex", "routine", "medium", 200, 4, 0.04)
+                + self.requests("gpt", "Codex", "routine", "high", 200, 6, 0.09))
         verdict = domain._effort_by_model(rows)["models"][0]["verdicts"][0]
         self.assertEqual((verdict["kind"], verdict["lower"], verdict["higher"]), ("lower", "medium", "high"))
         self.assertAlmostEqual(verdict["saving_per_request"], 0.05)
-        self.assertAlmostEqual(verdict["saving"], 4.0)
+        self.assertAlmostEqual(verdict["saving"], 10.0)
+        # 2 of 80 vs 3 of 80 is not enough evidence at 99%.
+        small = (self.requests("gpt", "Codex", "routine", "medium", 80, 2, 0.04)
+                 + self.requests("gpt", "Codex", "routine", "high", 80, 3, 0.09))
+        self.assertEqual(domain._effort_by_model(small)["models"][0]["verdicts"], [])
+
+    def test_no_pushback_on_either_side_is_not_proof_that_lower_is_safe(self):
+        rows = (self.requests("gpt", "Codex", "routine", "medium", 20, 0, 0.04)
+                + self.requests("gpt", "Codex", "routine", "high", 20, 0, 0.09))
+        self.assertEqual(domain._effort_by_model(rows)["models"][0]["verdicts"], [])
+
+    def test_a_thin_level_in_between_means_no_call_across_it(self):
+        rows = (self.requests("gpt", "Codex", "complex", "low", 200, 80, 0.05)
+                + self.requests("gpt", "Codex", "complex", "medium", 5, 1, 0.07)
+                + self.requests("gpt", "Codex", "complex", "high", 200, 10, 0.09))
+        self.assertEqual(domain._effort_by_model(rows)["models"][0]["verdicts"], [])
+
+    def test_codex_none_is_a_level_and_unpriced_cells_have_no_cost(self):
+        rows = (self.requests("gpt", "Codex", "routine", "none", 3, 0, 0.0)
+                + self.requests("gpt", "Codex", "routine", "low", 3, 0, 0.02))
+        out = domain._effort_by_model(rows)
+        model = out["models"][0]
+        self.assertEqual(model["efforts"], ["none", "low"])
+        self.assertEqual(out["unrecorded_spend"], 0)
+        cells = model["rows"][0]["cells"]
+        self.assertIsNone(cells[0]["cost_per_request"])
+        self.assertAlmostEqual(cells[1]["cost_per_request"], 0.02)
 
     def test_thin_or_noisy_evidence_makes_no_call(self):
         thin = (self.requests("gpt", "Codex", "routine", "medium", 10, 0, 0.04)

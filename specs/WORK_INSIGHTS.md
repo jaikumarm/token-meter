@@ -297,18 +297,21 @@ matrix: pushback rate (shaded by rate), labeled follow-ups, and cost per
 request in each cell. Effort means something different on each model, so
 columns are that model's own levels and levels are never compared across
 models. A cell with fewer than 20 labeled follow-ups reads "too few to tell".
-Only requests with a complexity label and a recorded effort count; the rest
-of the spend is named as left out. Codex records effort per request; Claude
+Only requests with a complexity label and a recorded effort count (Codex
+`none` is a level); the rest of the labeled spend is named as left out. A cell
+whose requests are all unpriced shows no cost rather than $0. Codex records effort per request; Claude
 Code records `perTurnEffort` only when an effort is set, so Claude models
 appear once one is.
 
-Verdicts compare neighbouring levels with enough samples within one
-complexity row:
+Verdicts compare levels next to each other among the model's own levels,
+within one complexity row, when both have at least 20 labeled follow-ups and a
+known cost (a thin level in between means no call across it). Because many
+cells are compared at once, both tests use 99% rather than 95%:
 
 | Verdict | When | Shown saving |
 | --- | --- | --- |
-| **Safe to lower** | The lower level is cheaper per request and its pushback is no worse than the next level's by more than 5 points (upper end of the 95% interval of the difference) | (cost per request gap) × requests at the higher level, over the period |
-| **Worth raising** | The lower level's pushback is higher by a two-proportion z above 1.96 | none |
+| **Safe to lower** | The lower level is cheaper per request and its pushback is no worse than the next level's by more than 5 points: the upper end of the 99% Agresti-Caffo interval of the difference (one pushback and one not added to each side, so no pushback on either side is not proof) stays below 5 points | (cost per request gap) × requests at the higher level, over the period |
+| **Worth raising** | The lower level's pushback is higher by a two-proportion z above 2.576 | none |
 | **No call yet** | Otherwise | none |
 
 Model families drop version numbers, vendor or region prefixes, `[1m]`-style

@@ -8347,7 +8347,7 @@ function renderWorkEffortModels(insights){
  const key=model=>`${model.model}\u0000${model.runtime}`;
  const chosen=models.find(model=>key(model)===workEffortModel)||models[0];
  $('w-effort-model-chips').innerHTML=models.map(model=>`<button type=button class=chip data-effort-model="${esc(key(model))}" aria-pressed=${model===chosen}>${esc(model.model)} · ${esc(model.runtime)}</button>`).join('');
- const unrecorded=data.unrecorded_spend>0?`${money(data.unrecorded_spend)} of spend in this period has no recorded effort and is left out; Claude records effort only when one is set.`:'';
+ const unrecorded=data.unrecorded_spend>0?`${money(data.unrecorded_spend)} of labeled spend in this period has no recorded effort and is left out; Claude records effort only when one is set.`:'';
  if(!chosen){
   $('w-effort-grid').innerHTML='<div class=workEmpty>No reasoning effort was recorded for labeled requests in this period.</div>';
   $('w-effort-verdicts').innerHTML='';$('w-effort-note').textContent=unrecorded;return;
@@ -8366,7 +8366,7 @@ function renderWorkEffortModels(insights){
   return `<div class=workEffortCell role=cell style="--heat:${heat}" title="${esc(`${workEffortRate(cell.rework)} pushback from ${cell.rework.samples} labeled follow-ups · ${f(cell.requests)} requests`)}"><b>${workEffortRate(cell.rework)}</b><small>${f(cell.rework.samples)} follow-ups · ${esc(cost)}</small></div>`;
  }).join('')}</div>`).join('');
  const verdicts=chosen.verdicts||[];
- $('w-effort-verdicts').innerHTML=verdicts.length?verdicts.map(workEffortVerdict).join(''):'<li>No call yet: neighbouring levels need at least 20 labeled follow-ups each, and a difference larger than noise.</li>';
+ $('w-effort-verdicts').innerHTML=verdicts.length?verdicts.map(workEffortVerdict).join(''):'<li>No call yet: neighbouring levels need at least 20 labeled follow-ups each and a clear difference (99% confidence).</li>';
  $('w-effort-note').textContent=['Pushback and costs are estimates from local labels; levels are compared only within this model and kind of work.',unrecorded].filter(Boolean).join(' ');
 }
 document.addEventListener('click',event=>{

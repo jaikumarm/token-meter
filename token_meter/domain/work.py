@@ -806,16 +806,23 @@ def _effort(requests):
 EFFORT_RANK = ("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra")
 # A lower level counts as safe when its pushback is no worse than the next level's by more than this.
 SAFE_LOWER_MARGIN = 0.05
+# Many cells are compared at once (models × rows × levels), so verdicts use 99% rather than 95%.
+VERDICT_Z = 2.576
 
 
 def _two_proportion(low, high):
-    """(difference low - high, its 95% half-width, pooled z) for two pushback rates."""
-    p1, n1, p2, n2 = low["rate"], low["samples"], high["rate"], high["samples"]
-    diff = p1 - p2
-    spread = 1.96 * math.sqrt(p1 * (1 - p1) / n1 + p2 * (1 - p2) / n2)
-    pooled = (p1 * n1 + p2 * n2) / (n1 + n2)
+    """(adjusted difference low - high, its half-width, pooled z) for two pushback rates.
+
+    The difference and its interval use the Agresti-Caffo adjustment (one pushback and one not added to each
+    side), so two levels with no pushback at all do not look certain; the z test uses the plain pooled rate.
+    """
+    n1, n2 = low["samples"], high["samples"]
+    x1, x2 = low["rate"] * n1, high["rate"] * n2
+    a1, a2 = (x1 + 1) / (n1 + 2), (x2 + 1) / (n2 + 2)
+    spread = VERDICT_Z * math.sqrt(a1 * (1 - a1) / (n1 + 2) + a2 * (1 - a2) / (n2 + 2))
+    pooled = (x1 + x2) / (n1 + n2)
     se = math.sqrt(pooled * (1 - pooled) * (1 / n1 + 1 / n2))
-    return diff, spread, (diff / se if se else 0.0)
+    return a1 - a2, spread, ((x1 / n1 - x2 / n2) / se if se else 0.0)
 
 
 def _effort_by_model(requests):
@@ -830,7 +837,7 @@ def _effort_by_model(requests):
         if r["complexity"] not in COMPLEXITY_OF:
             continue  # not labeled yet: it cannot land in a cell
         key = (r["model"], r["runtime"])
-        if r["effort"] in EFFORT_RANK and r["effort"] not in ("", "none"):
+        if r["effort"] in EFFORT_RANK:  # Codex "none" is a real setting: no extra reasoning
             by_model[key].append(r)
         else:
             unrecorded[key] += r["cost"]
@@ -845,8 +852,9 @@ def _effort_by_model(requests):
             for effort in efforts:
                 cell = [r for r in group if r["complexity"] in members and r["effort"] == effort]
                 spend = sum(r["cost"] for r in cell)
+                # Unpriced requests add nothing, so a cell with no spend has no known cost rather than $0.
                 cells.append({"effort": effort, "requests": len(cell), "spend": round(spend, 6),
-                              "cost_per_request": spend / len(cell) if cell else None,
+                              "cost_per_request": spend / len(cell) if spend > 0 else None,
                               "rework": _request_rework(cell)})
             rows.append({"complexity": name, "cells": cells})
             verdicts += _effort_verdicts(name, cells)
@@ -859,15 +867,18 @@ def _effort_by_model(requests):
 def _effort_verdicts(complexity, cells):
     """Safe-to-lower and worth-raising calls between neighbouring levels with enough labeled follow-ups."""
     verdicts = []
-    known = [c for c in cells if c["rework"] and not c["rework"]["few_samples"] and c["cost_per_request"]]
-    for low, high in zip(known, known[1:]):
-        if EFFORT_RANK.index(high["effort"]) - EFFORT_RANK.index(low["effort"]) < 1:
+    def known(cell):
+        return cell["rework"] and not cell["rework"]["few_samples"] and cell["cost_per_request"]
+
+    # Only levels next to each other among the model's own levels; a thin level in between means no call.
+    for low, high in zip(cells, cells[1:]):
+        if not (known(low) and known(high)):
             continue
         diff, spread, z = _two_proportion(low["rework"], high["rework"])
         base = {"complexity": complexity, "lower": low["effort"], "higher": high["effort"],
                 "lower_rate": low["rework"]["rate"], "higher_rate": high["rework"]["rate"],
                 "lower_samples": low["rework"]["samples"], "higher_samples": high["rework"]["samples"]}
-        if z > 1.96:
+        if z > VERDICT_Z:
             verdicts.append({"kind": "raise", **base})
         elif diff + spread < SAFE_LOWER_MARGIN and low["cost_per_request"] < high["cost_per_request"]:
             gap = high["cost_per_request"] - low["cost_per_request"]
