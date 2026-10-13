@@ -16,6 +16,7 @@ Three units, each used where it fits:
 
 import collections
 import datetime
+import math
 import re
 import statistics
 
@@ -684,6 +685,7 @@ def _aggregate(sessions, all_months, month_set, segments, area_names, tiers, tie
         "right_sizing": {"cells": cells, "tiers_known": bool(tiers), "effort": effort, "flagged": flagged},
         "model_fit": model_fit,
         "model_scorecard": scorecard,
+        "effort_by_model": _effort_by_model(labeled_requests),
         "opportunities": opportunities,
         "tags": _tag_summary(in_window, tag_context),
         "rhythm": rhythm,
@@ -798,6 +800,80 @@ def _effort(requests):
                          "flag": "possible_overthinking" if group_name == "routine" and effort in HIGH_EFFORTS
                          and spend > 0 else ""})
     return {"efforts": efforts, "cells": rows}
+
+
+# Effort levels in the order they buy more thinking; a model only shows the levels it actually used.
+EFFORT_RANK = ("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra")
+# A lower level counts as safe when its pushback is no worse than the next level's by more than this.
+SAFE_LOWER_MARGIN = 0.05
+
+
+def _two_proportion(low, high):
+    """(difference low - high, its 95% half-width, pooled z) for two pushback rates."""
+    p1, n1, p2, n2 = low["rate"], low["samples"], high["rate"], high["samples"]
+    diff = p1 - p2
+    spread = 1.96 * math.sqrt(p1 * (1 - p1) / n1 + p2 * (1 - p2) / n2)
+    pooled = (p1 * n1 + p2 * n2) / (n1 + n2)
+    se = math.sqrt(pooled * (1 - pooled) * (1 / n1 + 1 / n2))
+    return diff, spread, (diff / se if se else 0.0)
+
+
+def _effort_by_model(requests):
+    """Per model (scoped by runtime): complexity × that model's own effort levels, with pushback and cost.
+
+    Effort means different things on different models, so levels are only ever compared within one model,
+    one complexity row at a time, between neighbouring levels. Requests without a recorded effort are left out.
+    """
+    by_model = collections.defaultdict(list)
+    unrecorded = collections.Counter()
+    for r in requests:
+        if r["complexity"] not in COMPLEXITY_OF:
+            continue  # not labeled yet: it cannot land in a cell
+        key = (r["model"], r["runtime"])
+        if r["effort"] in EFFORT_RANK and r["effort"] not in ("", "none"):
+            by_model[key].append(r)
+        else:
+            unrecorded[key] += r["cost"]
+    ranked = sorted(by_model, key=lambda key: -sum(r["cost"] for r in by_model[key]))[:MAX_FIT_MODELS]
+    models = []
+    for model, runtime in ranked:
+        group = by_model[(model, runtime)]
+        efforts = [e for e in EFFORT_RANK if any(r["effort"] == e for r in group)]
+        rows, verdicts = [], []
+        for name, members in COMPLEXITY_GROUPS:
+            cells = []
+            for effort in efforts:
+                cell = [r for r in group if r["complexity"] in members and r["effort"] == effort]
+                spend = sum(r["cost"] for r in cell)
+                cells.append({"effort": effort, "requests": len(cell), "spend": round(spend, 6),
+                              "cost_per_request": spend / len(cell) if cell else None,
+                              "rework": _request_rework(cell)})
+            rows.append({"complexity": name, "cells": cells})
+            verdicts += _effort_verdicts(name, cells)
+        models.append({"model": model, "runtime": runtime, "efforts": efforts, "rows": rows,
+                       "spend": round(sum(r["cost"] for r in group), 6), "verdicts": verdicts})
+    return {"models": models, "unrecorded_spend": round(sum(unrecorded.values()), 6),
+            "unrecorded_models": len(unrecorded), "margin": SAFE_LOWER_MARGIN}
+
+
+def _effort_verdicts(complexity, cells):
+    """Safe-to-lower and worth-raising calls between neighbouring levels with enough labeled follow-ups."""
+    verdicts = []
+    known = [c for c in cells if c["rework"] and not c["rework"]["few_samples"] and c["cost_per_request"]]
+    for low, high in zip(known, known[1:]):
+        if EFFORT_RANK.index(high["effort"]) - EFFORT_RANK.index(low["effort"]) < 1:
+            continue
+        diff, spread, z = _two_proportion(low["rework"], high["rework"])
+        base = {"complexity": complexity, "lower": low["effort"], "higher": high["effort"],
+                "lower_rate": low["rework"]["rate"], "higher_rate": high["rework"]["rate"],
+                "lower_samples": low["rework"]["samples"], "higher_samples": high["rework"]["samples"]}
+        if z > 1.96:
+            verdicts.append({"kind": "raise", **base})
+        elif diff + spread < SAFE_LOWER_MARGIN and low["cost_per_request"] < high["cost_per_request"]:
+            gap = high["cost_per_request"] - low["cost_per_request"]
+            verdicts.append({"kind": "lower", **base, "saving_per_request": gap,
+                             "saving": round(gap * high["requests"], 6)})
+    return verdicts
 
 
 def _flagged_spend(requests, cells, effort):

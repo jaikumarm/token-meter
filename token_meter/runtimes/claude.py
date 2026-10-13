@@ -49,6 +49,14 @@ MAX_TOOL_EVENTS = 2_000
 ACTIVITY_TAIL_BYTES = 1024 * 1024
 
 
+
+def _turn_effort(value):
+    """A short lowercase effort level such as ``high``, or "" when the turn has none."""
+    if not isinstance(value, str):
+        return ""
+    value = value.strip().lower()
+    return value if value.isalpha() and len(value) <= 12 else ""
+
 def _file_signature(path):
     try:
         stat = os.stat(path)
@@ -921,6 +929,8 @@ class ClaudeRuntimeAdapter:
                     "ts": timestamp_parser(row.get("timestamp")) or 0,
                     "last_ts": timestamp_parser(row.get("timestamp")) or 0,
                     "side": bool(row.get("isSidechain")),
+                    # Claude Code records the reasoning effort of a turn when one is set; unset stays unknown.
+                    "effort": _turn_effort(row.get("perTurnEffort")),
                     "content": [],
                     "_owner_path": owner,
                 }
@@ -1732,7 +1742,7 @@ class ClaudeRuntimeAdapter:
             toks = usage_tokens(usage)
             cost += c
             if work_on:
-                work_events.append((rec["ts"], c, rec["model"], ""))
+                work_events.append((rec["ts"], c, rec["model"], rec.get("effort") or ""))
             tokens += toks
             models.add(rec["model"].replace("claude-", ""))
             model_cost[rec["model"]] += c

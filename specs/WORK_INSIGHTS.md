@@ -289,6 +289,28 @@ spend, and capped at 8. Savings are estimates and can overlap.
 | **Use a stronger model for complex work** | Complex+ on light models with pushback above the median cell (20+ labeled turns) | none (usually costs more) |
 | **Start a fresh session sooner** | Sessions with 30+ requests cost at least 1.5x more per request than sessions with 10 or fewer (5+ priced sessions each) | long-session spend − long requests × short-session cost per request (upper bound) |
 
+### Effort by model
+
+Under the Right-sizing cards, one model at a time (scoped by app, top five by
+spend among models with recorded effort) shows a complexity × reasoning-effort
+matrix: pushback rate (shaded by rate), labeled follow-ups, and cost per
+request in each cell. Effort means something different on each model, so
+columns are that model's own levels and levels are never compared across
+models. A cell with fewer than 20 labeled follow-ups reads "too few to tell".
+Only requests with a complexity label and a recorded effort count; the rest
+of the spend is named as left out. Codex records effort per request; Claude
+Code records `perTurnEffort` only when an effort is set, so Claude models
+appear once one is.
+
+Verdicts compare neighbouring levels with enough samples within one
+complexity row:
+
+| Verdict | When | Shown saving |
+| --- | --- | --- |
+| **Safe to lower** | The lower level is cheaper per request and its pushback is no worse than the next level's by more than 5 points (upper end of the 95% interval of the difference) | (cost per request gap) × requests at the higher level, over the period |
+| **Worth raising** | The lower level's pushback is higher by a two-proportion z above 1.96 | none |
+| **No call yet** | Otherwise | none |
+
 Model families drop version numbers, vendor or region prefixes, `[1m]`-style
 markers, `-v1:0`, and date stamps (`claude-opus-4-8` and `claude-opus-5-5` are
 both `claude-opus`, versions `(4, 8)` and `(5, 5)`).

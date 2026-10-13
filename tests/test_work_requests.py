@@ -243,6 +243,18 @@ class RequestAggregationTests(unittest.TestCase):
         self.assertEqual((fit[("feature", "gpt-5.6")]["rework"]["rate"], fit[("feature", "gpt-5.6")]["rework"]["samples"]),
                          (1.0, 1))
 
+    def test_effort_by_model_reads_each_requests_own_effort_from_the_payload(self):
+        r = row("s", ["2026-09-10"] * 3, [1.0, 2.0, 3.0])
+        for request, effort in zip(r["_work_requests"], ("low", "high", "")):
+            request["model"], request["effort"] = "gpt-5.6", effort
+        requests = {"s": [{"work_type": "feature", "area": "Frontend & UI", "complexity": "routine"},
+                          {"work_type": "feature", "area": "Frontend & UI", "complexity": "routine", "pushback": False},
+                          {"work_type": "feature", "area": "Frontend & UI", "complexity": "routine", "pushback": False}]}
+        out = self.build([r], requests)["effort_by_model"]
+        model = out["models"][0]
+        self.assertEqual((model["model"], model["runtime"], model["efforts"]), ("gpt-5.6", "Codex", ["low", "high"]))
+        self.assertEqual(out["unrecorded_spend"], 3.0)  # the request with no recorded effort stays out
+
     def test_drill_down_returns_sessions_with_the_matching_spend(self):
         rows = [row("long", ["2026-09-10"] * 2, [10.0, 2.0]), row("doc", ["2026-09-11"], [3.0])]
         requests = {"long": [{"work_type": "feature", "area": "Frontend & UI"},
@@ -283,6 +295,65 @@ class CleanTextTests(unittest.TestCase):
                          "[uploaded: TAX FORM.pdf] review this please")
         self.assertEqual(W.prepare_text("[Request interrupted by user]"), "")
 
+
+
+class EffortByModelTests(unittest.TestCase):
+    @staticmethod
+    def requests(model, runtime, complexity, effort, count, pushbacks, cost):
+        return [{"model": model, "runtime": runtime, "complexity": complexity, "effort": effort, "cost": cost,
+                 "next_labeled": True, "next_pushback": i < pushbacks, "session": f"{model}-{i}"}
+                for i in range(count)]
+
+    def test_each_model_keeps_its_own_levels_and_runtime(self):
+        rows = (self.requests("opus", "Claude Code", "routine", "high", 3, 0, 1.0)
+                + self.requests("opus", "Cursor", "routine", "low", 3, 0, 0.1)
+                + self.requests("opus", "Claude Code", "routine", "", 5, 0, 9.0)  # no effort recorded
+                + self.requests("gpt", "Codex", "", "high", 4, 0, 2.0))  # effort, but no complexity label yet
+        out = domain._effort_by_model(rows)
+        by = {(m["model"], m["runtime"]): m for m in out["models"]}
+        self.assertEqual(by[("opus", "Claude Code")]["efforts"], ["high"])
+        self.assertEqual(by[("opus", "Cursor")]["efforts"], ["low"])
+        self.assertEqual(out["unrecorded_spend"], 45.0)
+        self.assertNotIn(("gpt", "Codex"), by)  # nothing it could fill
+        cell = by[("opus", "Claude Code")]["rows"][0]["cells"][0]
+        self.assertEqual((cell["requests"], cell["cost_per_request"]), (3, 1.0))
+        self.assertTrue(cell["rework"]["few_samples"])
+
+    def test_low_effort_that_draws_more_pushback_on_complex_work_is_worth_raising(self):
+        rows = (self.requests("gpt", "Codex", "complex", "low", 60, 20, 0.05)
+                + self.requests("gpt", "Codex", "complex", "medium", 60, 5, 0.08))
+        verdicts = domain._effort_by_model(rows)["models"][0]["verdicts"]
+        self.assertEqual([(v["kind"], v["complexity"], v["lower"], v["higher"]) for v in verdicts],
+                         [("raise", "complex", "low", "medium")])
+
+    def test_a_cheaper_level_with_no_worse_pushback_is_safe_to_lower(self):
+        rows = (self.requests("gpt", "Codex", "routine", "medium", 80, 2, 0.04)
+                + self.requests("gpt", "Codex", "routine", "high", 80, 3, 0.09))
+        verdict = domain._effort_by_model(rows)["models"][0]["verdicts"][0]
+        self.assertEqual((verdict["kind"], verdict["lower"], verdict["higher"]), ("lower", "medium", "high"))
+        self.assertAlmostEqual(verdict["saving_per_request"], 0.05)
+        self.assertAlmostEqual(verdict["saving"], 4.0)
+
+    def test_thin_or_noisy_evidence_makes_no_call(self):
+        thin = (self.requests("gpt", "Codex", "routine", "medium", 10, 0, 0.04)
+                + self.requests("gpt", "Codex", "routine", "high", 10, 5, 0.09))
+        self.assertEqual(domain._effort_by_model(thin)["models"][0]["verdicts"], [])
+        # Enough samples, but the lower level could be up to ~10 points worse: no safe-to-lower call.
+        noisy = (self.requests("gpt", "Codex", "routine", "medium", 25, 3, 0.04)
+                 + self.requests("gpt", "Codex", "routine", "high", 25, 2, 0.09))
+        self.assertEqual(domain._effort_by_model(noisy)["models"][0]["verdicts"], [])
+
+
+
+class ClaudeTurnEffortTests(unittest.TestCase):
+    def test_a_claude_turns_effort_is_read_when_set_and_unknown_otherwise(self):
+        from token_meter.runtimes import claude as C
+        rows = [({"type": "assistant", "perTurnEffort": effort, "timestamp": "2026-10-10T10:00:00Z",
+                  "message": {"id": f"m{i}", "model": "claude-opus-5-5", "usage": {"output_tokens": 5},
+                              "content": []}}, "o")
+                for i, effort in enumerate(("High", None, {"level": "max"}, "high; drop"))]
+        out = C.ClaudeRuntimeAdapter._logical_messages(rows, lambda value: 1.0, True)
+        self.assertEqual([record["effort"] for record in out], ["high", "", "", ""])
 
 if __name__ == "__main__":
     unittest.main()

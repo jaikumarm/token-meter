@@ -1854,6 +1854,35 @@ process.stdout.write(JSON.stringify(out));
         # Declared before the first route runs: a deep link at startup must not hit the variable's dead zone.
         self.assertLess(self.page.index("let pendingSettingsScroll=null;"), self.page.index("function applyHashRoute("))
 
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_effort_by_model_renders_one_model_with_verdicts_and_thin_cells(self):
+        page = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "page.html")
+        script = """
+const fs=require('fs');const page=fs.readFileSync(process.argv[1],'utf8');
+function extract(name){let start=page.indexOf(`function ${name}(`);let i=page.indexOf('{',start),depth=0;for(;i<page.length;i++){if(page[i]==='{')depth++;else if(page[i]==='}'&&--depth===0)return page.slice(start,i+1);}}
+const nodes={};const $=id=>nodes[id]||(nodes[id]={innerHTML:'',textContent:'',hidden:false,style:{}});
+const esc=s=>String(s),f=v=>String(v),money=v=>'$'+Number(v).toFixed(2);
+var workEffortModel='';const WORK_EFFORT_ROWS={routine:'Routine',everyday:'Everyday',complex:'Complex+'};
+eval(['workEffortRate','workEffortVerdict','renderWorkEffortModels'].map(extract).join('\\n'));
+const cell=(effort,requests,rate,samples,few)=>({effort,requests,cost_per_request:requests?0.5:null,rework:samples?{rate,samples,few_samples:few}:null});
+const model={model:'gpt',runtime:'Codex',efforts:['high','xhigh'],verdicts:[{kind:'lower',complexity:'everyday',lower:'high',higher:'xhigh',lower_rate:.09,higher_rate:.16,lower_samples:197,higher_samples:591,saving_per_request:.96,saving:720.25}],
+ rows:[{complexity:'routine',cells:[cell('high',3,0,2,true),cell('xhigh',0)]},{complexity:'everyday',cells:[cell('high',269,.09,197,false),cell('xhigh',752,.16,591,false)]},{complexity:'complex',cells:[cell('high',0),cell('xhigh',0)]}]};
+renderWorkEffortModels({effort_by_model:{models:[model,{...model,model:'other',verdicts:[]}],unrecorded_spend:12.5}});
+const out={grid:$('w-effort-grid').innerHTML,verdicts:$('w-effort-verdicts').innerHTML,note:$('w-effort-note').textContent,chips:$('w-effort-model-chips').innerHTML,cols:$('w-effort-grid').style.gridTemplateColumns};
+renderWorkEffortModels({effort_by_model:{models:[],unrecorded_spend:0}});out.empty=$('w-effort-grid').innerHTML;
+process.stdout.write(JSON.stringify(out));
+"""
+        out = json.loads(subprocess.run(["node", "-e", script, page], capture_output=True, text=True, check=True).stdout)
+        self.assertEqual(out["cols"], "110px repeat(2,minmax(96px,1fr))")
+        self.assertIn("<b>too few to tell</b><small>2 follow-ups", out["grid"])
+        self.assertIn("<b>9%</b><small>197 follow-ups · $0.50/request</small>", out["grid"])
+        self.assertIn("data-empty", out["grid"])
+        self.assertIn("<b>xhigh → high looks safe</b>. Pushback 9% at high vs 16% at xhigh, from 197 and 591", out["verdicts"])
+        self.assertIn("$720.25 over this period", out["verdicts"])
+        self.assertIn("$12.50 of spend in this period has no recorded effort", out["note"])
+        self.assertIn('aria-pressed=true>gpt · Codex', out["chips"])
+        self.assertIn("No reasoning effort was recorded", out["empty"])
+
     def test_current_session_hints_keep_their_styles(self):
         # A merge once dropped these with an unrelated deleted block; the markup alone does not show it.
         for rule in (".currentSessionHints{display:grid;gap:6px;margin-top:14px}",
