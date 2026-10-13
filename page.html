@@ -8630,11 +8630,12 @@ function workSettingsDirty(){
  const savedAreas=(saved.areas||[]).map(area=>({name:area.name,description:area.description}));
  return draft.model!==(saved.model||'')||draft.ollama_url!==(saved.ollama_url||'')||JSON.stringify(draft.areas)!==JSON.stringify(savedAreas);
 }
+const WORK_UNSAVED_NOTE=' Other changes are not saved yet.';
 function updateWorkSaveState(){
  const dirty=Boolean(WORK_SETTINGS)&&workSettingsDirty(),line=$('work-settings-status');
  $('work-save').disabled=!dirty;
  if(dirty&&line.textContent==='Saved locally.')line.textContent='Unsaved changes';
- else if(!dirty&&line.textContent==='Unsaved changes')line.textContent='Saved locally.';
+ else if(!dirty&&(line.textContent==='Unsaved changes'||line.textContent.endsWith(WORK_UNSAVED_NOTE)))line.textContent='Saved locally.';
 }
 function renderWorkAreas(){
  const limits=WORK_SETTINGS?.settings?.limits||{min_areas:2,max_areas:8,name:40,description:200},areas=workAreasDraft||[];
@@ -8648,13 +8649,14 @@ async function loadWorkSettings(){
 }
 async function saveWorkSettings(payload,message){
  // A toggle saves at once; keep unsaved model, address, and area edits that it does not include.
- const kept=!('model' in payload)&&!('areas' in payload)&&!payload.reset_areas&&workSettingsDirty()?{draft:workSettingsDraft(),areas:workAreasDraft}:null;
+ const kept=!('model' in payload)&&workSettingsDirty()?{draft:workSettingsDraft(),areas:'areas' in payload||payload.reset_areas?null:workAreasDraft}:null;
  $('work-settings-status').textContent='Saving…';
  try{
   const result=await postWorkAction('/settings/work-insights',payload);
   renderWorkSettings({settings:result.work_insights,status:result.status},{force:true});
-  if(kept){$('work-model').value=kept.draft.model;$('work-url').value=kept.draft.ollama_url;workAreasDraft=kept.areas;renderWorkAreas();}
-  $('work-settings-status').textContent=message||(kept?'Saved. Other changes are not saved yet.':'Saved locally.');
+  if(kept){$('work-model').value=kept.draft.model;$('work-url').value=kept.draft.ollama_url;if(kept.areas)workAreasDraft=kept.areas;renderWorkAreas();}
+  const unsaved=kept&&workSettingsDirty();
+  $('work-settings-status').textContent=unsaved?`${message||'Saved.'}${WORK_UNSAVED_NOTE}`:message||'Saved locally.';
   workLastLoadedAt=0;
  }catch(error){$('work-settings-status').textContent=error.message;}
 }

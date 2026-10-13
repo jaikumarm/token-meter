@@ -1894,7 +1894,7 @@ process.stdout.write(JSON.stringify({
 const fs=require('fs');const page=fs.readFileSync(process.argv[1],'utf8');
 function extract(name){let start=page.indexOf(`function ${name}(`);let i=page.indexOf('{',start),depth=0;for(;i<page.length;i++){if(page[i]==='{')depth++;else if(page[i]==='}'&&--depth===0)return page.slice(start,i+1);}}
 const nodes={'work-model':{value:'token-meter-gemma'},'work-url':{value:'http://127.0.0.1:11434'},'work-save':{disabled:false},'work-settings-status':{textContent:'Saved locally.'}};const $=id=>nodes[id];
-var WORK_SETTINGS={settings:{model:'token-meter-gemma',ollama_url:'http://127.0.0.1:11434',areas:[{name:'A',description:'a',extra:1}]}};
+var WORK_UNSAVED_NOTE=' Other changes are not saved yet.';var WORK_SETTINGS={settings:{model:'token-meter-gemma',ollama_url:'http://127.0.0.1:11434',areas:[{name:'A',description:'a',extra:1}]}};
 var workAreasDraft=[{name:'A',description:'a'}];
 eval(['workSettingsDraft','workSettingsDirty','updateWorkSaveState'].map(extract).join('\\n'));
 const out=[];const check=()=>{updateWorkSaveState();out.push(nodes['work-save'].disabled);};
@@ -1924,17 +1924,24 @@ const fs=require('fs');const page=fs.readFileSync(process.argv[1],'utf8');
 function extract(name){let start=page.indexOf(`async function ${name}(`);if(start<0)start=page.indexOf(`function ${name}(`);let i=page.indexOf('{',start),depth=0;for(;i<page.length;i++){if(page[i]==='{')depth++;else if(page[i]==='}'&&--depth===0)return page.slice(start,i+1);}}
 const nodes={'work-model':{value:'m'},'work-url':{value:'u'},'work-save':{disabled:true},'work-settings-status':{textContent:'Saved locally.'}};const $=id=>nodes[id];
 const saved={model:'m',ollama_url:'u',areas:[{name:'A',description:'a'}],pause_on_battery:true};
-var WORK_SETTINGS={settings:saved},workAreasDraft=[{name:'A',description:'a'}],workLastLoadedAt=1;
+var WORK_UNSAVED_NOTE=' Other changes are not saved yet.';var WORK_SETTINGS={settings:saved},workAreasDraft=[{name:'A',description:'a'}],workLastLoadedAt=1;
 function renderWorkAreas(){updateWorkSaveState();}
 function renderWorkSettings(payload){WORK_SETTINGS=payload;nodes['work-model'].value=payload.settings.model;nodes['work-url'].value=payload.settings.ollama_url;workAreasDraft=payload.settings.areas.map(a=>({...a}));renderWorkAreas();}
-const sent=[];async function postWorkAction(path,payload){sent.push(payload);return {work_insights:{...saved,...payload},status:{}};}
+const sent=[];async function postWorkAction(path,payload){sent.push(payload);const {reset_areas,...rest}=payload;Object.assign(saved,rest);return {work_insights:{...saved},status:{}};}
 eval(['workSettingsDraft','workSettingsDirty','updateWorkSaveState','saveWorkSettings'].map(extract).join('\\n'));
 (async()=>{
  nodes['work-model'].value='new-model';workAreasDraft[0].description='edited';updateWorkSaveState();
  await saveWorkSettings({pause_on_battery:false});
  const afterToggle={model:nodes['work-model'].value,area:workAreasDraft[0].description,save:nodes['work-save'].disabled,line:nodes['work-settings-status'].textContent};
  await saveWorkSettings(workSettingsDraft());
- process.stdout.write(JSON.stringify({afterToggle,sent,after:{model:nodes['work-model'].value,save:nodes['work-save'].disabled,line:nodes['work-settings-status'].textContent}}));
+ const after={model:nodes['work-model'].value,save:nodes['work-save'].disabled,line:nodes['work-settings-status'].textContent};
+ // Undoing the edits after a toggle save clears the "not saved yet" note.
+ nodes['work-model'].value='edit';updateWorkSaveState();await saveWorkSettings({enabled:true},'On. Labeling starts in the background.');
+ const enabled=nodes['work-settings-status'].textContent;
+ nodes['work-model'].value='new-model';updateWorkSaveState();const undone=nodes['work-settings-status'].textContent;
+ // Restoring default areas keeps an unsaved model edit.
+ nodes['work-model'].value='typed';updateWorkSaveState();await saveWorkSettings({reset_areas:true},'Default areas restored.');
+ process.stdout.write(JSON.stringify({afterToggle,sent,after,enabled,undone,reset:{model:nodes['work-model'].value,line:nodes['work-settings-status'].textContent}}));
 })();
 """
         out = json.loads(subprocess.run(["node", "-e", script, page_path], capture_output=True, text=True,
@@ -1944,6 +1951,10 @@ eval(['workSettingsDraft','workSettingsDirty','updateWorkSaveState','saveWorkSet
         self.assertEqual(out["sent"][0], {"pause_on_battery": False})  # the toggle alone
         self.assertEqual(out["sent"][1]["model"], "new-model")
         self.assertEqual(out["after"], {"model": "new-model", "save": True, "line": "Saved locally."})
+        self.assertEqual(out["enabled"], "On. Labeling starts in the background. Other changes are not saved yet.")
+        self.assertEqual(out["undone"], "Saved locally.")
+        self.assertEqual(out["reset"], {"model": "typed",
+                                        "line": "Default areas restored. Other changes are not saved yet."})
 
     def test_effort_by_model_renders_one_model_with_verdicts_and_thin_cells(self):
         page = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "page.html")
