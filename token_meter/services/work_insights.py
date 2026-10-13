@@ -48,7 +48,7 @@ PRESSURE_CRITICAL = 4
 STORAGE_RETRY_S = 300
 CPU_BUSY_LIMIT = 0.75  # share of all cores busy; the load-average fallback compares load per core
 CPU_SAMPLE_S = 0.5
-CPU_WINDOW_MAX_S = 60.0
+CPU_WINDOW_MAX_S = 120.0  # longer than THROTTLE_WAIT_S, so a recheck measures the whole wait
 LATENCY_DRIFT_FACTOR = 3.0
 LATENCY_WINDOW = 10
 ACTIVE_WINDOW_S = 600
@@ -997,6 +997,7 @@ class WorkInsightsService:
         self._snapshot = None
         self.ledger = None
         self._labeled = {}
+        self._deferred = {}  # session key -> requests held until the live session moves on
         self._failures = {}
         self._openers = {}
         self._recent_added = set()
@@ -1106,9 +1107,12 @@ class WorkInsightsService:
         active = bool(newest and newest >= now - ACTIVE_WINDOW_S)
         # A live session's newest request is still being worked on: its kind of work and complexity wait
         # until the next request starts or the session goes quiet, so the classifier sees what it led to.
-        in_progress = max((i for i, text in enumerate(prepared) if text), default=None) if active else None
+        # A short reply ("go on") after it continues the same request, so it stays held.
+        in_progress = max((i for i, text in enumerate(prepared)
+                           if text and (i == opener_index or is_substantive(text))), default=None) if active else None
         items = []
         retry_count, retry_at = 0, None
+        deferred = 0
         earlier = ""
         last_evidence = ""  # what the agent changed after the previous typed turn
         for ordinal, turn in enumerate(turns):
@@ -1134,9 +1138,11 @@ class WorkInsightsService:
             wanted = tuple(q for q in questions if self._needs(turn_key, q, tags, now))
             if ordinal == in_progress and any(q in REQUEST_QUESTIONS for q in wanted):
                 wanted = tuple(q for q in wanted if q not in REQUEST_QUESTIONS)
-                quiet_at = newest + ACTIVE_WINDOW_S + 1
-                retry_count += 1
-                retry_at = quiet_at if retry_at is None else min(retry_at, quiet_at)
+                deferred = 1
+                if not waiting:  # a turn already in retry backoff is counted once
+                    quiet_at = newest + ACTIVE_WINDOW_S + 1
+                    retry_count += 1
+                    retry_at = quiet_at if retry_at is None else min(retry_at, quiet_at)
             if not wanted:
                 continue
             if "work_type" in wanted and "area" not in wanted:
@@ -1146,6 +1152,12 @@ class WorkInsightsService:
             items.append((turn_key, wanted, (request_state(text, context, previous, turn.get("evidence"), opener),
                                              turn_state),
                           float(turn.get("ts") or newest or 0), float(turn.get("cost") or 0)))
+        with self.lock:
+            # Held on purpose, so not "left to label" in the status.
+            if deferred:
+                self._deferred[session_key] = deferred
+            else:
+                self._deferred.pop(session_key, None)
         if opener_key and not self._note_opener(session_key, opener_key, follow_ups, generation):
             return 0
         if not items and not retry_count:
@@ -1588,8 +1600,9 @@ class WorkInsightsService:
         settings = self.settings_provider()
         with self.lock:
             queued = len(self.queue)
+            held = sum(self._deferred.values())
         try:
-            backlog = self.ledger.backlog_pending() if self.ledger else 0
+            backlog = max(0, (self.ledger.backlog_pending() if self.ledger else 0) - held)
             mix = self.ledger.model_mix() if self.ledger else {}
         except sqlite3.Error:
             backlog, mix = 0, {}
@@ -1840,6 +1853,7 @@ class WorkInsightsService:
                 self.queue.clear()
                 self.queued.clear()
                 self._labeled, self._failures = {}, {}
+                self._deferred = {}
                 self._openers = {}
                 self._recent_added.clear()
                 self.labels_version += 1

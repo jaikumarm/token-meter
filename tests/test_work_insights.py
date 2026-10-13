@@ -2920,9 +2920,17 @@ class ReviewFixTests(unittest.TestCase):
         self.assertAlmostEqual(probe(), 0.10)  # a stale sample is replaced by a fresh window
         self.assertEqual(len(slept), 2)
         self.assertEqual(probe(), 9.9)  # no tick counter: load per core
-        if sys.platform == "darwin":
-            busy, total = W._cpu_ticks()
-            self.assertTrue(0 <= busy <= total)
+        self.assertGreater(W.CPU_WINDOW_MAX_S, W.THROTTLE_WAIT_S)  # a recheck after a wait measures all of it
+
+    @unittest.skipUnless(sys.platform == "darwin", "macOS tick counters")
+    def test_macos_tick_counters_are_readable(self):
+        busy, total = W._cpu_ticks()
+        self.assertTrue(0 <= busy <= total)
+        opened = W._mach
+        W._cpu_ticks()
+        self.assertIs(W._mach, opened)  # the library and host port are opened once
+
+    def test_mostly_free_cores_are_not_busy(self):
         # Many idle threads (load 1.8 per core) with most cores free is not busy.
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -2943,6 +2951,12 @@ class ReviewFixTests(unittest.TestCase):
         key = service.session_key("s")
         self.assertEqual(service.ledger.next_backlog(5, clock.now), [])
         self.assertEqual(service.ledger.next_backlog(5, clock.now - 60 + 1 + W.ACTIVE_WINDOW_S + 1), [key])
+        # Held on purpose, so not counted as left to label.
+        self.assertEqual(service.status()["pending"], len(service.queue))
+        # A short reply continues the same request: it stays held.
+        service.observe("s", live + [dict(turns("go on")[0], ts=clock.now - 1)])
+        asked = {i.turn_key: set(i.questions) for i in service.queue}
+        self.assertFalse(set(W.REQUEST_QUESTIONS) & asked.get(second, set()))
         # A newer request releases it.
         service.observe("s", live + [dict(turns("Now update the tests for it")[0], ts=clock.now)])
         asked = {i.turn_key: set(i.questions) for i in service.queue}
