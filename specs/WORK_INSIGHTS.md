@@ -133,8 +133,10 @@ confidences, prompt versions, taxonomy hashes, and the model digest are stored.
 
 A short reply ("yes", "go on") is not labeled for work type, area, or
 complexity; it keeps the labels of the request before it (requests before
-the first label take the first label). Within a session the queue labels the
-most expensive requests first.
+the first label take the first label). Live sessions go first, then requests
+that have never been labeled, then relabels (a new prompt version or areas);
+the backlog refills sessions with no labels first. Within a session the queue
+labels the most expensive requests first.
 
 Every question uses Gemma's raw turn format: the state and the question go in
 as JSON strings with lettered options, sent raw to `/api/generate`, and the

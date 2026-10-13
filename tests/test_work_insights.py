@@ -2900,6 +2900,29 @@ class ReviewFixTests(unittest.TestCase):
         service.labels_version += 1
         self.assertNotIn("area", service.snapshot().get(service.session_key("s2"), {}))
 
+    def test_never_labeled_work_goes_before_relabels(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        service, values, clock = make_service(tmp.name)
+        shown = service._turn_key("shown", 0)
+        for question in W.REQUEST_QUESTIONS:
+            service.ledger.record_label(shown, question, service.session_key("shown"), "x", 0.9, "p4", "d", clock.now)
+        service._labeled, service._failures = service.ledger.labeled_keys()
+        newer = [dict(t, ts=t["ts"] + 200) for t in turns("Fix the chart axis labels please")]  # not live
+        older = turns("Write the release notes for this week")
+        with mock.patch.object(W, "QUEUE_LIMIT", 1):
+            service.observe("shown", newer)
+            service.observe("fresh", older)
+        # The full queue takes the never-labeled turn and sends the relabel back to the backlog.
+        self.assertEqual([(i.session_key, i.relabel) for i in service.queue], [(service.session_key("fresh"), False)])
+        self.assertEqual(service.ledger.next_backlog(5, clock.now + 10), [service.session_key("shown")])
+        service.observe("shown", newer)
+        self.assertEqual(service._next_item().session_key, service.session_key("fresh"))
+        service.ledger.upsert_backlog(service.session_key("fresh"), 1, 1, clock.now)
+        service.ledger.upsert_backlog(service.session_key("shown"), 9_999_999_999, 1, clock.now)
+        self.assertEqual(service.ledger.next_backlog(5, clock.now + 10),
+                         [service.session_key("fresh"), service.session_key("shown")])
+
     def test_area_labels_from_reworded_earlier_defaults_show_until_relabeled(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)

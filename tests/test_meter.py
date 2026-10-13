@@ -8936,6 +8936,22 @@ console.log(JSON.stringify({
         })
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required for dashboard JavaScript")
+    def test_efficiency_effort_reads_default_only_for_apps_that_record_effort(self):
+        script = "\n".join(re.search(rf"function {name}\(.*?\n\}}", self.page, re.DOTALL).group(0)
+                           for name in ("modelEffortLabel", "efficiencyEffortLabel")) + r"""
+console.log(JSON.stringify([
+  efficiencyEffortLabel({reasoning_effort:'xhigh',providers:['codex']}),
+  efficiencyEffortLabel({providers:['claude'],thinking_executions:9}),
+  efficiencyEffortLabel({providers:['codex']}),
+  efficiencyEffortLabel({providers:['cursor']}),
+  efficiencyEffortLabel({providers:['claude','cursor']}),
+]));
+"""
+        result = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True)
+        self.assertEqual(json.loads(result.stdout), ["xhigh", "default", "default", "unavailable", "unavailable"])
+        self.assertIn("effort=efficiencyEffortLabel(row)", self.page)
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required for dashboard JavaScript")
     def test_efficiency_chart_delta_compares_latest_two_covered_days(self):
         match = re.search(r"function efficiencyTrendDelta\(.*?\n\}", self.page, re.DOTALL)
         self.assertIsNotNone(match, "Efficiency charts need a comparable-day delta helper")

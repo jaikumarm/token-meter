@@ -908,7 +908,8 @@ class LabelLedger:
     def next_backlog(self, limit, now):
         with self._connect() as connection:
             return [r["session_key"] for r in connection.execute(
-                "SELECT session_key FROM work_backlog WHERE added_at <= ? ORDER BY newest_ts DESC LIMIT ?",
+                "SELECT session_key FROM work_backlog WHERE added_at <= ? ORDER BY EXISTS (SELECT 1 FROM work_labels"
+                " WHERE work_labels.session_key = work_backlog.session_key), newest_ts DESC LIMIT ?",
                 (int(now), int(limit)))]
 
     def backlog_pending(self):
@@ -949,8 +950,9 @@ class Pacer:
 # ---------------------------------------------------------------- service
 
 # ``state`` is (request state, follow-up state); ``newest_ts`` is the session's newest activity; ``cost`` the request's.
-Item = collections.namedtuple("Item", "priority seq session_key turn_key questions state newest_ts cost turn_ts",
-                              defaults=(0.0, 0.0))
+# ``relabel`` marks a turn that already shows a label, so never-labeled work goes first.
+Item = collections.namedtuple("Item", "priority seq session_key turn_key questions state newest_ts cost turn_ts relabel",
+                              defaults=(0.0, 0.0, False))
 
 
 class WorkInsightsService:
@@ -1153,13 +1155,15 @@ class WorkInsightsService:
             for turn_key, wanted, state, turn_ts, cost in items:
                 if turn_key in self.queued:
                     continue
-                if room <= 0 and not active:
+                relabel = any((turn_key, question) in self._labeled for question in wanted)
+                # Never-labeled work joins a full queue and the trim below pushes relabels back to the backlog.
+                if room <= 0 and not active and relabel:
                     overflow[session_key][0] += 1
                     overflow[session_key][1] = max(overflow[session_key][1], newest)
                     continue
                 self.seq += 1
                 self.queue.append(Item(0 if active else 1, self.seq, session_key, turn_key, wanted, state,
-                                       newest, cost, turn_ts))
+                                       newest, cost, turn_ts, relabel))
                 self.queued.add(turn_key)
                 room -= 1
                 added += 1
@@ -1884,8 +1888,9 @@ class WorkInsightsService:
 
 
 def _queue_order(item):
-    """Live sessions first, then newest sessions; within a session the most expensive, then newest, requests."""
-    return (item.priority, -item.newest_ts, -item.cost, -item.turn_ts, item.seq)
+    """Live sessions first, then never-labeled work, then newest sessions; within a session the most expensive,
+    then newest, requests."""
+    return (item.priority, item.relabel, -item.newest_ts, -item.cost, -item.turn_ts, item.seq)
 
 
 def _remove_if_present(path):
