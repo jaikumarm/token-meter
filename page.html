@@ -7622,7 +7622,8 @@ function workRateText(rework){
 function workMonthLabel(month,partial){return workMonthName(month,{year:true,partial});}
 function workClock(value){
  if(!value||value==='indefinite')return'';
- return new Date(Number(value)*1000).toLocaleString([],{weekday:'short',hour:'2-digit',minute:'2-digit'});
+ const when=new Date(Number(value)*1000),today=new Date().toDateString()===when.toDateString();
+ return when.toLocaleString([],today?{hour:'2-digit',minute:'2-digit'}:{weekday:'short',hour:'2-digit',minute:'2-digit'});
 }
 function workDuration(seconds){
  if(!seconds)return'';
@@ -7631,7 +7632,7 @@ function workDuration(seconds){
 }
 const WORK_SETUP_ACTIVE=['checking','installing_ollama','starting_ollama','downloading_model','importing'];
 let workSetupTimer=0;
-function workGigabytes(bytes){return `${(Math.max(0,bytes||0)/1e9).toFixed(1)} GB`;}
+function workGigabytes(bytes){const value=Math.max(0,bytes||0);return value<1e9?`${Math.round(value/1e6)} MB`:`${(value/1e9).toFixed(1)} GB`;}
 const WORK_SETUP_STEP={checking:'ollama',installing_ollama:'ollama',starting_ollama:'ollama',downloading_model:'model',importing:'prepare'};
 const WORK_SETUP_DETAIL={size:'The connection dropped before the download finished. What arrived is kept, and the next try resumes from there.',hash:'The downloaded file didn’t match its checksum, so it was deleted and will be downloaded again.',archive:'Ollama’s download didn’t pass its safety check, so it was deleted.',signature:'Ollama’s download wasn’t signed by Ollama, so it was deleted.',http_status:'The download server turned the request away.',tls:'A secure connection couldn’t be made. A proxy, VPN, or network filter may be blocking it.',timeout:'The connection timed out.',connection:'The connection was lost or couldn’t be opened.',curl:'A second download method also failed.',disk:'The disk filled up during the download.',start_timeout:'Ollama took too long to start.',import_failed:'Adding the model to Ollama failed.'};
 // Download speed from successive status polls, smoothed so one slow poll doesn't swing the estimate.

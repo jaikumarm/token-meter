@@ -1857,13 +1857,14 @@ const out={};
 const dl={state:'downloading_model',done_bytes:1e9,total_bytes:5e9};
 workSetupCopy(dl);now+=10000;out.slow=workSetupCopy({...dl,done_bytes:1e9+5e6})[2];
 now+=10000;workSetupRate={bytes:2e9,at:now-10000,speed:0,state:'downloading_model'};out.fast=workSetupCopy({...dl,done_bytes:2.2e9})[2];
-out.failed=workSetupCopy({state:'failed',reason:'network',detail:'size',retry_at:1800000000,attempts:2});
+out.failed=workSetupCopy({state:'failed',reason:'network',detail:'size',retry_at:1800000000,attempts:2});out.small=`${workGigabytes(8e7)} of ${workGigabytes(1.6e8)}`;
 renderWorkSetupSteps({state:'failed'},'model');out.steps=items.map(i=>i.dataset.state);
 renderWorkSetupSteps({state:'importing'},'prepare');out.importing=items.map(i=>i.dataset.state);
 process.stdout.write(JSON.stringify(out));
 """
         out = json.loads(subprocess.run(["node", "-e", script, page], capture_output=True, text=True, check=True).stdout)
         self.assertIn("1.0 GB of 5.0 GB · 500 KB/s", out["slow"])
+        self.assertEqual(out["small"], "80 MB of 160 MB")
         self.assertIn("slow connection: this can take a while, and you can leave this page", out["slow"])
         self.assertIn("20.0 MB/s · about 2 min left", out["fast"])
         self.assertNotIn("slow connection", out["fast"])
