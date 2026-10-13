@@ -1367,10 +1367,10 @@ MAX_HINT_MODEL = 80
 def live_session_hints(rows, current, labels, key_for, output_price, corrections_for=None, requests_for=None):
     """Suggestions for running sessions, keyed by trace key; content-free and bounded.
 
-    Per-request versions of the Right-sizing checks on the session's latest labeled request: routine work
-    on a premium model or at high effort, complex work on a light model that has had pushback in this
-    session, the last two labeled follow-ups both pushback, and 30+ requests. Model-switch advice that
-    needs outcome evidence stays on the Work page.
+    Right-sizing checks for one session: routine work on a premium model or at high effort when it is most of
+    the spend of requests with their own label, complex work on a light model (latest labeled request) that has
+    had pushback in this session, the last two labeled follow-ups both pushback, and 30+ requests.
+    Model-switch advice that needs outcome evidence stays on the Work page.
     """
     wanted = {str(c.get("session") or "") for c in current or () if c.get("session")}
     if not wanted:
@@ -1400,12 +1400,14 @@ def live_session_hints(rows, current, labels, key_for, output_price, corrections
         current = slices[index if index is not None else -1] if slices and len(slices) == turns else {}
         model = (current.get("model") or primary_model(row))[:MAX_HINT_MODEL]
         tier = tiers.get((runtime, model))
-        effort = str(current.get("effort") or row.get("reasoning_effort") or "").lower()
         hints = []
         # One short routine follow-up is not routine work: the routine hints need most of the labeled spend.
         start = (row.get("start") or "")[:10]
         requests = [r for r in _session_requests(row, entry, own or [], [d or start for d in turn_days(row)], (),
                                                  tiers, PENDING, None) if r["complexity"]]
+        if any(r["labeled"] for r in requests):
+            # Only requests with their own label: one not labeled yet would inherit the label before it.
+            requests = [r for r in requests if r["labeled"]]
         labeled_spend = sum(r["cost"] or 1e-9 for r in requests)
         premium = [r for r in requests if r["complexity"] == "routine" and r["tier"] == "premium"]
         if premium and sum(r["cost"] or 1e-9 for r in premium) * 2 > labeled_spend:

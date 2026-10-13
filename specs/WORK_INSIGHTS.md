@@ -341,8 +341,12 @@ the next session, because switching mid-session re-reads the conversation:
 | --- | --- |
 | Two pushbacks in a row | the last two confidently labeled follow-ups were pushback |
 | Complex work on a light model | the latest labeled request is Complex+ on a light-tier model that has had pushback in this session (a per-session check, looser than Right-sizing's median rule) |
-| Mostly routine work on a premium model | routine requests on a premium-tier model are more than half of the session's labeled spend; names the app's most-used standard model |
-| Mostly routine work at high effort | routine requests at xhigh, max, or ultra effort are more than half of the session's labeled spend |
+| Mostly routine work on a premium model | routine requests on a premium-tier model are more than half of the spend of requests with their own label; names the app's most-used standard model |
+| Mostly routine work at high effort | routine requests at xhigh, max, or ultra effort are more than half of the spend of requests with their own label |
+
+Here, unlike the Work page, a request does not inherit the label before it:
+a request not labeled yet would otherwise take a short question's "routine"
+and turn a heavy session into routine work.
 | Long session | 30 or more requests so far |
 
 The first four need Work labels; the long-session check works without them.

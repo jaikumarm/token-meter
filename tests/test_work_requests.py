@@ -290,7 +290,7 @@ class RequestAggregationTests(unittest.TestCase):
         r["session"] = "live"
         for request in r["_work_requests"]:
             request["effort"] = effort
-        labels = [dict(label, work_type="feature") for label in labels]
+        labels = [dict(label, work_type="feature") if label else {} for label in labels]
         return domain.live_session_hints([r, row("other", ["2026-09-30"], [1.0], model="mid")],
                                          [{"session": "live"}], {}, lambda ident: ident.split("\0")[0],
                                          lambda m, p: self.PRICES.get(m),
@@ -300,6 +300,9 @@ class RequestAggregationTests(unittest.TestCase):
         # A costly complex request followed by short routine follow-ups is not routine work.
         self.assertEqual(self.live_hints([8.0, 1.0, 1.0], [{"complexity": "complex"}, {"complexity": "routine"},
                                                            {"complexity": "routine"}], effort="xhigh"), [])
+        # Requests not labeled yet do not inherit "routine" from a short question before them.
+        self.assertEqual(self.live_hints([1.0, 1.0, 9.0], [{"complexity": "everyday"}, {"complexity": "routine"}, {}],
+                                         effort="xhigh"), [])
         # Half is not most.
         self.assertEqual(self.live_hints([1.0, 1.0], [{"complexity": "complex"}, {"complexity": "routine"}]), [])
         hints = self.live_hints([1.0, 3.0], [{"complexity": "complex"}, {"complexity": "routine"}], effort="xhigh")
@@ -309,6 +312,15 @@ class RequestAggregationTests(unittest.TestCase):
         self.assertIn("Next time", hints[1]["detail"])
         self.assertEqual(self.live_hints([1.0, 3.0], [{"complexity": "routine"}, {"complexity": "routine"}],
                                          effort="medium")[0]["kind"], "premium_routine")
+        # Without per-request labels the session's own label is the evidence.
+        r = row("live", ["2026-09-30"] * 2, [1.0, 3.0])
+        r["session"] = "live"
+        for requests_for in (None, lambda ident, n: None):
+            hints = domain.live_session_hints([r, row("other", ["2026-09-30"], [1.0], model="mid")],
+                                              [{"session": "live"}], {"live": {"complexity": "routine"}},
+                                              lambda ident: ident.split("\0")[0], lambda m, p: self.PRICES.get(m),
+                                              requests_for=requests_for)
+            self.assertEqual([h["kind"] for h in hints["live"]], ["premium_routine"])
 
 
 def collections_sum(out):
