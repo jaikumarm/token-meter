@@ -4388,6 +4388,7 @@ if(h==='logs'||legacyGlobal){
   if(LATEST)renderSettings(LATEST.xsession);
   const card={'model-pricing':'model-pricing-settings','settings-updates':'update-settings','settings-work-insights':'work-insights-settings','settings-appearance':'appearance-settings'}[h];
   if(card)scrollToSettingsCard(card);
+  else pendingSettingsScroll=null; // plain #settings: drop a scroll an earlier link left waiting
   loadWorkSettings();
   loadAgentAccess();
   return;
@@ -11171,27 +11172,38 @@ const SELECTED_SESSION_POLL_MS=2000;
 // Deep links into Settings: a card can still be hidden (Work insights wait for the server to say they are
 // supported) or move down as cards above it fill in, so the scroll waits for it and settles once.
 function scrollToSettingsCard(id){
- pendingSettingsScroll={id,until:Date.now()+60000,top:null};
+ pendingSettingsScroll={id,since:Date.now(),until:Date.now()+60000,top:null,stable:0,timer:0};
  requestAnimationFrame(trySettingsScroll);
 }
 function trySettingsScroll(){
  const pending=pendingSettingsScroll;
- if(!pending||Date.now()>pending.until||!$('view-settings').classList.contains('on')){pendingSettingsScroll=null;return;}
+ if(!pending)return;
+ pending.timer=0;
+ if(Date.now()>pending.until||!$('view-settings').classList.contains('on')){pendingSettingsScroll=null;return;}
  const card=$(pending.id);
  if(!card||card.hidden||!card.getClientRects().length)return; // shown later: applyWorkSupport retries
  const top=card.getBoundingClientRect().top;
- if(pending.top!==null&&Math.abs(top-pending.top)<4){pendingSettingsScroll=null;return;} // settled
- card.scrollIntoView({block:'start'});
+ if(pending.top!==null&&Math.abs(top-pending.top)<4){
+  if(++pending.stable>=2){pendingSettingsScroll=null;return;} // still for two checks in a row: settled
+ }else{
+  pending.stable=0;card.scrollIntoView({block:'start'});
+ }
  pending.top=card.getBoundingClientRect().top;
- setTimeout(trySettingsScroll,600);
+ pending.timer=setTimeout(trySettingsScroll,600);
 }
-// The reader takes over as soon as they scroll themselves.
-['wheel','touchstart','keydown'].forEach(type=>window.addEventListener(type,()=>{pendingSettingsScroll=null;},{passive:true}));
+// The reader takes over once they scroll or click themselves; the keypress or click that opened the link doesn't count.
+const SETTINGS_SCROLL_KEYS=['ArrowUp','ArrowDown','PageUp','PageDown','Home','End',' '];
+['wheel','touchstart','mousedown','keydown'].forEach(type=>window.addEventListener(type,event=>{
+ const pending=pendingSettingsScroll;
+ if(!pending||Date.now()-pending.since<300)return;
+ if(type==='keydown'&&!SETTINGS_SCROLL_KEYS.includes(event.key))return;
+ clearTimeout(pending.timer);pendingSettingsScroll=null;
+},{passive:true}));
 function applyWorkSupport(supported){
  if(typeof supported!=='boolean'||supported===workSupported)return;
  workSupported=supported;
  $('tab-work').hidden=!supported;$('work-insights-settings').hidden=!supported;
- if(supported&&pendingSettingsScroll)requestAnimationFrame(trySettingsScroll);
+ if(supported&&pendingSettingsScroll&&!pendingSettingsScroll.timer)requestAnimationFrame(trySettingsScroll);
  if(!supported&&/^#?(work|sessions-all\?work=)/.test(location.hash.replace(/^#/,'')))location.hash='sessions';
 }
 function applyLiveState(state){

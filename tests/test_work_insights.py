@@ -1821,24 +1821,36 @@ class SurfaceContractTests(unittest.TestCase):
         script = """
 const fs=require('fs');const page=fs.readFileSync(process.argv[1],'utf8');
 function extract(name){let start=page.indexOf(`function ${name}(`);let i=page.indexOf('{',start),depth=0;for(;i<page.length;i++){if(page[i]==='{')depth++;else if(page[i]==='}'&&--depth===0)return page.slice(start,i+1);}}
-let now=0;Date.now=()=>now;const timers=[];const setTimeout=(fn)=>timers.push(fn);const requestAnimationFrame=fn=>fn();
+let now=0;Date.now=()=>now;let timers=[];const setTimeout=fn=>{timers.push(fn);return timers.length;};const clearTimeout=()=>{};
+const requestAnimationFrame=fn=>fn();
 let scrolls=0,top=1900;
 const card={hidden:true,getClientRects:()=>card.hidden?[]:[1],getBoundingClientRect:()=>({top}),scrollIntoView(){scrolls++;top=100;}};
 const view={classList:{contains:()=>true}};const $=id=>id==='view-settings'?view:card;
+const listeners={};const window={addEventListener:(type,fn)=>{listeners[type]=fn;}};
 var pendingSettingsScroll=null;
 eval(extract('trySettingsScroll')+extract('scrollToSettingsCard'));
+const block=page.slice(page.indexOf('const SETTINGS_SCROLL_KEYS='),page.indexOf('function applyWorkSupport('));eval(block);
 const out={};
 scrollToSettingsCard('work-insights-settings');out.whileHidden=scrolls;
-card.hidden=false;trySettingsScroll();out.shown=scrolls;           // applyWorkSupport shows the card
-top=640;timers.shift()();out.afterShift=scrolls;                   // a card above filled in and pushed it down
-timers.shift()();out.settled=scrolls;out.pending=pendingSettingsScroll;// no move this time: done
+card.hidden=false;trySettingsScroll();out.shown=scrolls;            // applyWorkSupport shows the card
+top=640;timers.shift()();out.afterShift=scrolls;                    // a card above filled in and pushed it down
+timers.shift()();out.oneStable=pendingSettingsScroll!==null;        // one still reading is not enough
+timers.shift()();out.settled=pendingSettingsScroll;                 // two in a row: done
+// The Enter that chose the link must not cancel it; a later wheel does; other keys never do.
+scrollToSettingsCard('appearance-settings');listeners.keydown({key:'Enter'});out.afterEnter=pendingSettingsScroll!==null;
+now+=1000;listeners.keydown({key:'Tab'});out.afterTab=pendingSettingsScroll!==null;
+listeners.wheel({});out.afterWheel=pendingSettingsScroll;
 process.stdout.write(JSON.stringify(out));
 """
         out = json.loads(subprocess.run(["node", "-e", script, page], capture_output=True, text=True, check=True).stdout)
-        self.assertEqual((out["whileHidden"], out["shown"], out["afterShift"], out["settled"]), (0, 1, 2, 2))
-        self.assertIsNone(out["pending"])
-        self.assertIn("if(supported&&pendingSettingsScroll)requestAnimationFrame(trySettingsScroll);", self.page)
-        self.assertIn("window.addEventListener(type,()=>{pendingSettingsScroll=null;},{passive:true})", self.page)
+        self.assertEqual((out["whileHidden"], out["shown"], out["afterShift"]), (0, 1, 2))
+        self.assertTrue(out["oneStable"])
+        self.assertIsNone(out["settled"])
+        self.assertTrue(out["afterEnter"])
+        self.assertTrue(out["afterTab"])
+        self.assertIsNone(out["afterWheel"])
+        self.assertIn("if(supported&&pendingSettingsScroll&&!pendingSettingsScroll.timer)requestAnimationFrame(trySettingsScroll);", self.page)
+        self.assertIn("else pendingSettingsScroll=null; // plain #settings", self.page)
         # Declared before the first route runs: a deep link at startup must not hit the variable's dead zone.
         self.assertLess(self.page.index("let pendingSettingsScroll=null;"), self.page.index("function applyHashRoute("))
 
