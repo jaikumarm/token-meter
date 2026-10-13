@@ -1087,16 +1087,9 @@ class BuilderRecapStandalonePageTests(unittest.TestCase):
         self.assertLess(primary.index('href="/#efficiency"'), primary.index('href="/#work"'))
         self.assertLess(primary.index('href="/#work"'), primary.index('href="/#git"'))
         self.assertLess(primary.index('href="/#git"'), primary.index("id=tab-performance"))
-        # Work appears only where the dashboard shows it, and shortcuts match the dashboard rail.
-        self.assertIn('id=rail-work href="/#work"', primary)
-        self.assertRegex(primary, r'id=rail-work [^>]*data-shortcut-digit=6 hidden>')
+        # Work appears only where the dashboard shows it.
+        self.assertIn('id=rail-work href="/#work" aria-label=Work title=Work hidden>', primary)
         self.assertIn("$('rail-work').hidden=payload?.settings?.supported!==true;", page)
-        self.assertIn(':not([hidden])`);', page)
-        dashboard = Path(meter.__file__).with_name("page.html").read_text()
-        for route, label in (("efficiency", "Efficiency"), ("work", "Work"), ("git", "Git"), ("learn", "Learn"),
-                             ("capabilities", "Tools"), ("settings", "Settings")):
-            digit = re.search(rf'{label} · Shortcut: Option\+(\d)', dashboard).group(1)
-            self.assertIn(f'href="/#{route}" aria-label={label} title="{label} · Shortcut: Option+{digit}"', page)
         self.assertNotIn("Make it yours.", page)
         self.assertNotIn("Builder Recap Studio", page)
 
@@ -7106,7 +7099,8 @@ function extract(name){{let start=page.indexOf(`function ${{name}}(`);if(start<0
 const appFilterGroup=s=>s.provider,projectFilterValue=p=>p||'';
 eval(['timeFilterBounds','agentIdentityPresentation','filterSubagentInventory','childRootId','localDateKey','dateKeyAgo','calendarMonthWindow','monthToDateWindow','modelRangeWindow','subagentRoleKey','subagentRoleDayRows','subagentModelKey','subagentModelDayRows','normalizedSubagentNavigationState'].map(extract).join('\\n'));
 eval(page.slice(page.indexOf('function allSessionsView('),page.indexOf('function allSessionsCountText(')));
-const subagentFilterDefaults={{query:'',role:'',kind:'',runtime:'',project:'',model:'',status:'all',signal:'all',window:'all',sort:'recent'}};
+const DEFAULT_TIME_FILTER_WINDOW='30d';
+const subagentFilterDefaults={{query:'',role:'',kind:'',runtime:'',project:'',model:'',status:'all',signal:'all',window:DEFAULT_TIME_FILTER_WINDOW,sort:'recent'}};
 const now=new Date(2026,9,5,12).getTime(),at=(...parts)=>new Date(...parts).getTime()/1000;
 const bounds=timeFilterBounds('last_month',now);
 const stamps={{current:at(2026,9,1,0,0,1),lastStart:at(2026,8,1),lastEnd:at(2026,8,30,23,59,59),prior:at(2026,7,31,23,59,59)}};
@@ -7139,7 +7133,7 @@ process.stdout.write(JSON.stringify({{
         self.assertEqual(payload["rolling"], 0)
         self.assertEqual(self.page.count(
             "<option value=today>Today</option><option value=yesterday>Yesterday</option>"
-            "<option value=7d>7 days</option><option value=30d>30 days</option>"
+            "<option value=7d>7 days</option><option value=30d selected>30 days</option>"
             "<option value=90d>90 days</option><option value=month>Month</option>"
             "<option value=last_month>Last month</option><option value=all>All history</option></select>"
         ), 2)
@@ -7155,7 +7149,7 @@ const appFilterGroup=s=>s.provider,projectFilterValue=p=>p||'';
 eval(page.slice(page.indexOf('const TIME_FILTER_WINDOWS='),page.indexOf('const DELIVERY_EVIDENCE_FILTERS=')).replace(/^const /gm,'var '));
 eval(['agentIdentityPresentation','filterSubagentInventory','childRootId','localDateKey','dateKeyAgo','calendarMonthWindow','monthToDateWindow','modelRangeWindow','subagentRoleKey','subagentRoleDayRows','normalizedSubagentNavigationState'].map(extract).join('\\n'));
 eval(page.slice(page.indexOf('function allSessionsView('),page.indexOf('function allSessionsCountText(')));
-const subagentFilterDefaults={{query:'',role:'',kind:'',runtime:'',project:'',model:'',status:'all',signal:'all',window:'all',sort:'recent'}};
+const subagentFilterDefaults={{query:'',role:'',kind:'',runtime:'',project:'',model:'',status:'all',signal:'all',window:DEFAULT_TIME_FILTER_WINDOW,sort:'recent'}};
 const now=new Date(2026,9,5,12).getTime(),at=(...parts)=>new Date(...parts).getTime()/1000;
 const stamps={{today:at(2026,9,5,0,0,1),yesterdayStart:at(2026,9,4),yesterdayEnd:at(2026,9,4,23,59,59),monthStart:at(2026,9,1),lastMonth:at(2026,8,30,23,59,59)}};
 const inventory=Object.entries(stamps).map(([id,last])=>({{id,root_session_id:'root',runtime:'codex',label:id,activity_state:'complete',last_activity_at:last,attention:[]}}));
@@ -7189,7 +7183,7 @@ process.stdout.write(JSON.stringify({{
         self.assertEqual(result["month"]["agents"], ["monthStart", "today", "yesterdayEnd", "yesterdayStart"])
         self.assertEqual(result["month"]["roleDays"], ["2026-10-01", "2026-10-04", "2026-10-05"])
         self.assertEqual(payload["migrated"], "today")
-        self.assertEqual(payload["invalid"], "all")
+        self.assertEqual(payload["invalid"], "30d")
         self.assertEqual(payload["restored"], "today")
         self.assertEqual(payload["restoredMonth"], "month")
         self.assertEqual(payload["labels"]["month"], "Month")
@@ -7314,10 +7308,11 @@ function extract(name){{let start=page.indexOf(`function ${{name}}(`);if(start<0
 const stored=new Map([['tm_subagent_filter_sort','elapsed']]),writes=[];
 const localStorage={{getItem:key=>stored.get(key)??null,setItem:(key,value)=>{{stored.set(key,String(value));writes.push([key,String(value)]);}}}};
 let subagentFilters;
+eval(page.slice(page.indexOf('const TIME_FILTER_WINDOWS='),page.indexOf('function normalizeTimeFilterWindow(')).replace(/^const /gm,'var '));
 const initStart=page.indexOf('let subagentFilters={{');
 const initEnd=page.indexOf('const SUBAGENT_PAGE_SIZE',initStart);
 eval(page.slice(initStart,initEnd).replace('let subagentFilters=','subagentFilters='));
-const subagentFilterDefaults={{query:'',role:'',kind:'',runtime:'',project:'',model:'',status:'all',signal:'all',window:'all',sort:'recent'}};
+const subagentFilterDefaults={{query:'',role:'',kind:'',runtime:'',project:'',model:'',status:'all',signal:'all',window:DEFAULT_TIME_FILTER_WINDOW,sort:'recent'}};
 eval(extract('normalizedSubagentNavigationState'));
 eval(extract('subagentActiveFilterItems'));
 const restored=normalizedSubagentNavigationState('sessions',{{sort:'elapsed'}});
@@ -7335,6 +7330,51 @@ process.stdout.write(JSON.stringify({{saved:subagentFilters.sort,stored:stored.g
         self.assertEqual(payload["chip"], {
             "key": "sort", "label": "Sort", "value": "Work time",
         })
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required for dashboard JavaScript")
+    def test_subagent_time_filter_defaults_to_thirty_days_and_labels_all_history(self):
+        script = f"""
+const fs=require('fs');
+const page=fs.readFileSync({json.dumps(str(Path(meter.__file__).with_name('page.html')))},'utf8');
+function extract(name){{let start=page.indexOf(`function ${{name}}(`);if(start<0)throw Error(`missing ${{name}}`);let i=page.indexOf('{{',start),depth=0;for(;i<page.length;i++){{if(page[i]==='{{')depth++;else if(page[i]==='}}'&&--depth===0)return page.slice(start,i+1);}}throw Error(`unclosed ${{name}}`);}}
+eval(page.slice(page.indexOf('const TIME_FILTER_WINDOWS='),page.indexOf('function normalizeTimeFilterWindow(')).replace(/^const /gm,'var '));
+const initStart=page.indexOf('let subagentFilters={{'),initEnd=page.indexOf('const SUBAGENT_PAGE_SIZE',initStart);
+const defaultsLine=page.slice(page.indexOf('const subagentFilterDefaults='),page.indexOf('function persistSubagentFilter(')).replace(/^const /,'var ');
+const persistSource=extract('persistSubagentFilter'),chipsSource=extract('subagentActiveFilterItems');
+function load(entries){{
+ const stored=new Map(entries);
+ const localStorage={{getItem:key=>stored.get(key)??null,setItem:(key,value)=>stored.set(key,String(value)),removeItem:key=>stored.delete(key)}};
+ let subagentFilters;
+ eval(page.slice(initStart,initEnd).replace('let subagentFilters=','subagentFilters='));
+ eval(defaultsLine);
+ const subagentFilterStorage={{window:'tm_subagent_filter_time'}};
+ eval(persistSource);
+ const loaded=subagentFilters.window;
+ subagentFilters.window='all';persistSubagentFilter('window');const keptAll=stored.get('tm_subagent_filter_time')??null;
+ subagentFilters.window='30d';persistSubagentFilter('window');const atDefault=stored.get('tm_subagent_filter_time')??null;
+ return {{loaded,keptAll,atDefault,defaults:subagentFilterDefaults}};
+}}
+const fresh=load([]),bogus=load([['tm_subagent_filter_time','bogus']]),saved=load([['tm_subagent_filter_time','all']]);
+const subagentFilterDefaults=fresh.defaults;
+const appFilterLabel=row=>row.provider,projectFilterLabel=value=>value;
+eval(chipsSource);
+const chip=window=>subagentActiveFilterItems({{...subagentFilterDefaults,window}}).find(item=>item.key==='window')||null;
+process.stdout.write(JSON.stringify({{
+ fresh:fresh.loaded,bogus:bogus.loaded,saved:saved.loaded,keptAll:fresh.keptAll,atDefault:fresh.atDefault,
+ defaultChip:chip('30d'),allChip:chip('all'),sevenChip:chip('7d'),
+}}));
+"""
+        payload = json.loads(subprocess.run(
+            ["node", "-e", script], capture_output=True, text=True, check=True,
+        ).stdout)
+        self.assertEqual(payload["fresh"], "30d")
+        self.assertEqual(payload["bogus"], "30d")
+        self.assertEqual(payload["saved"], "all")
+        self.assertEqual(payload["keptAll"], "all")
+        self.assertIsNone(payload["atDefault"])
+        self.assertIsNone(payload["defaultChip"])
+        self.assertEqual(payload["allChip"], {"key": "window", "label": "Time", "value": "All history"})
+        self.assertEqual(payload["sevenChip"], {"key": "window", "label": "Time", "value": "7 days"})
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required for dashboard JavaScript")
     def test_subagent_summary_tags_toggle_incomplete_and_attention_filters(self):
@@ -8981,7 +9021,7 @@ console.log(JSON.stringify({
         self.assertIn('id=e-reasoning-change', self.page)
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required for dashboard JavaScript")
-    def test_efficiency_charts_smooth_daily_segments_and_default_to_seven_days(self):
+    def test_efficiency_charts_smooth_daily_segments_and_default_to_thirty_days(self):
         match = re.search(
             r"function efficiencyChartSmoothPath\(.*?\n\}", self.page, re.DOTALL,
         )
@@ -9004,9 +9044,11 @@ console.log(JSON.stringify({
             "smooth": "M0.0 50.0 C3.3 43.3 6.7 36.7 10.0 30.0 C13.3 23.3 16.7 16.7 20.0 10.0",
             "pair": "M0.0 50.0 L10.0 30.0",
         })
-        self.assertIn("let efficiencyRange=localStorage.getItem('tm_efficiency_range')||'7';", self.page)
-        self.assertIn("if(!EFFICIENCY_RANGES.includes(efficiencyRange))efficiencyRange='7';", self.page)
-        self.assertIn('<option value=7 selected>7 days</option>', self.page)
+        self.assertIn("let efficiencyRange=localStorage.getItem('tm_efficiency_range')||'30';", self.page)
+        self.assertIn("if(!EFFICIENCY_RANGES.includes(efficiencyRange))efficiencyRange='30';", self.page)
+        efficiency_range = self.page.split('id=e-range aria-label="Efficiency history range">', 1)[1].split("</select>", 1)[0]
+        self.assertIn('<option value=30 selected>30 days</option>', efficiency_range)
+        self.assertNotIn('<option value=7 selected>', efficiency_range)
         self.assertIn(
             "renderTrendDelta('e-reasoning-change',reasoningDelta,'down',!comparison);",
             self.page,
@@ -9985,7 +10027,8 @@ console.log(JSON.stringify(groups.map(group => colors.get(group.key))));
             "const MODEL_RANGES=['today','yesterday','7','30','90','month','last_month','all'];",
             "const EFFICIENCY_RANGES=['today','yesterday','7','30','90','month','last_month','all'];",
             "const DELIVERY_RANGES=['today','yesterday','7','30','90','month','last_month'];",
-            "if(!DELIVERY_RANGES.includes(deliveryRange)){deliveryRange='7';localStorage.setItem('tm_delivery_range',deliveryRange);}",
+            "let deliveryRange=localStorage.getItem('tm_delivery_range')||'30';",
+            "if(!DELIVERY_RANGES.includes(deliveryRange)){deliveryRange='30';localStorage.setItem('tm_delivery_range',deliveryRange);}",
             "if(!MODEL_RANGES.includes(modelRange))",
             "function modelRangeWindow(range,now=new Date())",
             "if(range==='today'||range==='yesterday')",
@@ -10575,7 +10618,7 @@ console.log(JSON.stringify({
             "// spend-range-logic-start",
             "const SPEND_RUNTIME_COLORS={claude:'var(--provider-claude)',codex:'var(--provider-codex)',cursor:'var(--provider-cursor)',opencode:'var(--provider-opencode)',kiro:'var(--provider-kiro)',unknown:'var(--provider-other)'};",
             "function spendRangeWindow(range,from='',to='',now=new Date(),earliest='')",
-            "<select class=filterSelect id=s-range aria-label=\"Spend history range\"><option value=today>Today</option><option value=yesterday>Yesterday</option><option value=7>7 days</option><option value=30>30 days</option><option value=90>90 days</option><option value=month>Month</option><option value=last_month>Last month</option><option value=all>All history</option><option value=custom>Custom</option></select>",
+            "<select class=filterSelect id=s-range aria-label=\"Spend history range\"><option value=today>Today</option><option value=yesterday>Yesterday</option><option value=7>7 days</option><option value=30 selected>30 days</option><option value=90>90 days</option><option value=month>Month</option><option value=last_month>Last month</option><option value=all>All history</option><option value=custom>Custom</option></select>",
             "$('s-range').value=spendRangeChoice;",
             "$('s-range').onchange=event=>{",
             "function normalizeSpendRangeChoice(value)",
@@ -10645,7 +10688,7 @@ console.log(JSON.stringify({
         })
         self.assertEqual(
             payload["savedRanges"],
-            ["today", "yesterday", "7", "30", "90", "month", "last_month", "all", "custom", "7"],
+            ["today", "yesterday", "7", "30", "90", "month", "last_month", "all", "custom", "30"],
         )
         self.assertEqual(payload["yesterday"], {
             "valid": True, "start": "2026-08-11", "end": "2026-08-11",
@@ -11013,11 +11056,10 @@ console.log(JSON.stringify({
         self.assertEqual(positions, sorted(positions))
         for marker in (
             "id=command-palette", "id=command-search",
-            "const NAV_COMMANDS=[", "directKey:'Digit1'", "directKey:'Digit0'",
+            "const NAV_COMMANDS=[",
             "key==='k'", "event.key==='Escape'", "event.key==='ArrowDown'",
             "event.key==='Enter'",
             "class=tabs aria-label=\"Primary navigation\"",
-            "button.dataset.label} · Shortcut: Option+${shortcut}",
             "button.setAttribute('aria-current','page')",
         ):
             self.assertIn(marker, self.page)
@@ -11039,29 +11081,22 @@ console.log(JSON.stringify({
         self.assertNotIn("id=command-alt-key", self.page)
         self.assertNotIn("class=commandShortcut", self.page)
 
-    def test_top_level_shortcuts_follow_visible_rail_order(self):
-        expected = [
-            ("session", "1"), ("daily", "2"), ("models", "3"),
-            ("subagents", "4"), ("efficiency", "5"), ("work", "6"), ("git", "7"),
-            ("learn", "8"), ("capabilities", "9"), ("settings", "0"),
-        ]
-        for tab_id, digit in expected:
+    def test_top_level_pages_have_no_numbered_shortcuts(self):
+        for tab_id in (
+            "session", "daily", "models", "subagents", "efficiency",
+            "work", "git", "learn", "capabilities", "settings",
+        ):
             match = re.search(rf'<button[^>]+id=tab-{tab_id}[^>]*>.*?</button>', self.page)
             self.assertIsNotNone(match, tab_id)
             button = match.group(0)
-            self.assertIn(f'aria-keyshortcuts="Alt+{digit}"', button)
-            self.assertIn(f'Shortcut: Option+{digit}', button)
-            self.assertIn(f'<span class=tabShortcut aria-hidden=true>{digit}</span>', button)
-        commands = self.page.split("const NAV_COMMANDS=[", 1)[1].split("];", 1)[0]
-        for command_id, digit in (
-            ("sessions", "1"), ("spend", "2"), ("models", "3"),
-            ("subagents", "4"), ("efficiency", "5"), ("work", "6"), ("git", "7"),
-            ("learn", "8"), ("capabilities", "9"), ("settings", "0"),
-        ):
-            self.assertRegex(
-                commands,
-                rf"id:'{command_id}'.*?directKey:'Digit{digit}'.*?glyph:'{digit}'",
-            )
+            self.assertNotIn("aria-keyshortcuts", button)
+            self.assertNotIn("Shortcut", button)
+            self.assertNotIn("tabShortcut", button)
+        for marker in ("directKey", "tabShortcut", "Shortcut: Option+", "event.code"):
+            self.assertNotIn(marker, self.page)
+        perf = Path(__file__).resolve().parents[1].joinpath("performance.html").read_text(encoding="utf-8")
+        for marker in ("aria-keyshortcuts", "data-shortcut-digit", "railShortcut", "Shortcut: Option+", "event.code"):
+            self.assertNotIn(marker, perf)
 
     def test_tools_is_in_the_secondary_rail_above_settings(self):
         secondary = self.page.split("<div class=navSecondary>", 1)[1].split(
@@ -11139,13 +11174,12 @@ console.log(JSON.stringify({
             "complete?'Replay onboarding':'Resume onboarding'",
             "action:'onboarding'",
             "command.action==='onboarding'",
-            "function runNavigationCommand(command,{source='palette'}={})",
+            "function runNavigationCommand(command)",
             "function openOnboardingLesson(id)",
             "function finishOnboardingLesson()",
             "if(id)commitOnboardingSteps([id]);",
             "setTimeout(()=>openOnboardingLesson(step.id),0)",
             "if(lessonDialog.open&&event.key==='Escape')",
-            "runNavigationCommand(command,{source:'shortcut'})",
         ):
             self.assertIn(marker, self.page)
         resume = self.page.split("function resumeOrRestartOnboarding(){", 1)[1].split(
@@ -11206,7 +11240,10 @@ console.log(JSON.stringify({
         self.assertIn("tm_global_time", self.page)
         self.assertIn("renderAllSessionStats(view.statsRows)", self.page)
         self.assertIn("session.model_stats", self.page)
-        self.assertIn("globalSearch='';globalApp='';globalProject='';globalTime='all'", self.page)
+        self.assertIn("let globalTime=localStorage.getItem('tm_global_time')||DEFAULT_TIME_FILTER_WINDOW;", self.page)
+        self.assertIn("globalSearch='';globalApp='';globalProject='';globalTime=DEFAULT_TIME_FILTER_WINDOW", self.page)
+        self.assertIn("if(key==='time'){globalTime=DEFAULT_TIME_FILTER_WINDOW;", self.page)
+        self.assertIn("globalTime!==DEFAULT_TIME_FILTER_WINDOW&&['time',", self.page)
         self.assertIn("['tm_global_search','tm_global_app','tm_global_project','tm_global_time']", self.page)
         self.assertIn("fetch('/logs',{cache:'no-store'})", self.page)
         self.assertIn("allSessionInventory?mergeAllSessionInventory(allSessionInventory,xs.sessions)", self.page)
@@ -12418,8 +12455,7 @@ const ticks=async(count=8)=>{{while(count--)await Promise.resolve();}};
 
     def test_collapsed_navigation_keeps_session_scope_labels_visible(self):
         self.assertIn(
-            "body.spectrumApp .top .brandCopy,body.spectrumApp .top .tabLabel,"
-            "body.spectrumApp .top .tabShortcut{display:none}",
+            "body.spectrumApp .top .brandCopy,body.spectrumApp .top .tabLabel{display:none}",
             self.page,
         )
         self.assertIn("body.spectrumApp .top .brandCopy{display:grid}", self.page)
@@ -12937,7 +12973,7 @@ console.log(JSON.stringify({history,html,firstRunHtml}));
         for marker in (
             "$('tab-session').onclick=()=>{window.scrollTo(0,0);openCurrentSessions();};",
             "label:'Sessions'",
-            "action:'sessions',directKey:'Digit1'",
+            "action:'sessions'}",
             "setHashRoute('sessions',{replace:true,apply:false})",
             "const CURRENT_SESSION_ORDER_KEY='tm_current_session_order_v1'",
             "const CURRENT_SESSION_ORDER_MIGRATION_KEY='tm_current_session_newest_first_v1'",

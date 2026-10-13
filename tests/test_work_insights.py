@@ -1624,17 +1624,17 @@ class AppContractTests(unittest.TestCase):
     def test_platform_gate_follows_the_platform_service(self):
         self.assertEqual(meter.work_insights_supported(), meter._PLATFORM_SERVICES.platform_id == "macos")
 
-    def test_page_hides_work_off_macos_and_numbers_it(self):
+    def test_page_hides_work_off_macos(self):
         with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "page.html"),
                   encoding="utf-8") as handle:
             page = handle.read()
-        for marker in ('id=tab-work data-label=Work aria-label=Work aria-keyshortcuts="Alt+6" title="Work · Shortcut: Option+6" hidden>',
-                       '<span class=tabLabel>Work</span><span class=tabShortcut aria-hidden=true>6</span>',
+        for marker in ('id=tab-work data-label=Work aria-label=Work title=Work hidden>',
+                       '<span class=tabLabel>Work</span></button>',
                        'id=work-insights-settings hidden>',
                        "applyWorkSupport(state?.work_insights_supported);",
                        "if(workSupported===false){location.hash='sessions';return;}",
                        "if(command.id==='work'&&workSupported!==true)return false;",
-                       "route:'work',directKey:'Digit6',glyph:'6'"):
+                       "section:'Navigate',route:'work'}"):
             self.assertIn(marker, page)
 
     def test_setup_script_refuses_other_platforms(self):
@@ -1812,11 +1812,11 @@ class SurfaceContractTests(unittest.TestCase):
             cls.swift = handle.read()
         cls.root = root
 
-    def test_work_tab_sits_between_efficiency_and_git_with_option_6(self):
+    def test_work_tab_sits_between_efficiency_and_git(self):
         rail = [self.page.index(f"id=tab-{name}") for name in ("efficiency", "work", "git")]
         self.assertEqual(rail, sorted(rail))
         button = self.page[self.page.index("id=tab-work"):].split("</button>", 1)[0]
-        self.assertIn('aria-keyshortcuts="Alt+6"', button)
+        self.assertNotIn("aria-keyshortcuts", button)
         self.assertIn("{id:'work',label:'Work'", self.page)
         self.assertIn("if(h==='work'){", self.page)
 

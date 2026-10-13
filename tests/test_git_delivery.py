@@ -1511,6 +1511,8 @@ class GitDashboardContractTests(unittest.TestCase):
         )
         git_range = git_page.split('id=d-range aria-label="Git history range">', 1)[1].split("</select>", 1)[0]
         self.assertNotIn("<option value=all>", git_range)
+        self.assertIn("<option value=30 selected>30 days</option>", git_range)
+        self.assertNotIn("<option value=7 selected>", git_range)
         self.assertIn(
             "<option value=90>90 days</option><option value=month>Month</option>"
             "<option value=last_month>Last month</option></select>",
@@ -1698,12 +1700,12 @@ console.log(JSON.stringify({{mouse,pen,touch}}));
     def test_git_is_the_canonical_name_and_delivery_hash_is_compatible(self):
         for marker in (
             "id=tab-git data-label=Git aria-label=Git",
-            "title=\"Git · Shortcut: Option+7\"",
+            "title=Git>",
             "<span class=tabLabel>Git</span>",
             "<div class=view id=view-git>",
             "<h1>Git</h1>",
             "{id:'git',label:'Git'",
-            "route:'git',directKey:'Digit7'",
+            "route:'git'",
             "if(h==='delivery')setHashRoute('git',{replace:true,apply:false})",
             "if(h==='git'||h==='delivery')",
             "showTab('git')",
