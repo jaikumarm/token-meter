@@ -177,6 +177,7 @@ class WorkSetup:
         self._state = {"state": IDLE, "reason": "", "detail": "", "done_bytes": 0, "total_bytes": 0, "needed_bytes": 0,
                        "retry_at": 0, "attempts": 0}
         self._failures = 0
+        self._step = CHECKING
         self._retry_now = threading.Event()
         self.clock = time.time
 
@@ -195,6 +196,10 @@ class WorkSetup:
 
     def _set(self, state, **values):
         with self._lock:
+            if state in (CHECKING, INSTALLING, STARTING, DOWNLOADING, IMPORTING):
+                self._step = state
+            if state == FAILED:
+                values.setdefault("failed_during", self._step)  # which step to mark on the Work page
             self._state = {"state": state, "reason": "", "detail": "", "done_bytes": 0, "total_bytes": 0,
                            "needed_bytes": 0, "retry_at": 0, "attempts": self._failures, **values}
         self.log(state)
@@ -208,7 +213,10 @@ class WorkSetup:
         with self._lock:
             if self._thread is not None and self._thread.is_alive() and not self._winding_down:
                 if self._state["state"] == FAILED and not self._cancel.is_set():
-                    self._retry_now.set()  # waiting to retry on its own: Retry setup runs it now
+                    if self._state.get("retry_at"):
+                        self._retry_now.set()  # waiting to retry on its own: Retry setup runs it now
+                    else:
+                        self._restart = True  # the run is ending after a final failure: run again after it
                     return True
                 if self._cancel.is_set():
                     self._restart = True  # Turned off and on again before the old run reached a checkpoint.
@@ -218,6 +226,7 @@ class WorkSetup:
             self._winding_down = False
             self._cancel.clear()
             self._retry_now.clear()
+            self._failures = 0  # a fresh run starts its retry waits from the shortest
             self._state = {"state": CHECKING, "reason": "", "detail": "", "done_bytes": 0, "total_bytes": 0,
                            "needed_bytes": 0, "retry_at": 0, "attempts": self._failures}
             self._thread = threading.Thread(target=self._run_safely, name="work-setup", daemon=True)
@@ -535,7 +544,7 @@ class WorkSetup:
         except socket.timeout:
             raise SetupError("network", detail="timeout") from None
         except OSError as error:
-            raise SetupError("disk" if error.errno == errno.ENOSPC else "network",
+            raise SetupError("disk_space" if error.errno == errno.ENOSPC else "network",
                              detail="disk" if error.errno == errno.ENOSPC else "connection") from None
         except http.client.HTTPException:
             raise SetupError("network", detail="connection") from None
@@ -551,16 +560,44 @@ class WorkSetup:
         raise SetupError("verify", detail="size" if actual != size else "hash")
 
     def _download_with_curl(self, url, destination, size, digest, offset):
-        try:
-            result = self.runner([CURL, "--fail", "--location", "--silent", "--show-error", "--continue-at", "-",
-                                  "--retry", "2", "--connect-timeout", "30", "--output", destination, url],
-                                 capture_output=True, text=True, timeout=6 * 3600)
-        except (OSError, subprocess.SubprocessError):
-            raise SetupError("network", detail="curl") from None
-        if result.returncode not in (0, 33):  # 33: the server cannot resume a file that is already complete
+        # --disable (curl's -q) first: ignore ~/.curlrc, which could add --insecure, an output path, or tracing.
+        base = [CURL, "--disable", "--proto", "=https", "--proto-redir", "=https", "--fail", "--location", "--silent",
+                "--show-error", "--retry", "2", "--connect-timeout", "30", "--output", destination]
+        code = self._run_curl(base + ["--continue-at", "-", url], destination, offset)
+        if code == 33:  # the server will not resume this file: start it over once
+            if os.path.exists(destination):
+                os.remove(destination)
+            code = self._run_curl(base + [url], destination, offset)
+        if code != 0:
             raise SetupError("network", detail="curl")
         self._check_download(destination, size, digest)
         self._progress(offset + size)
+
+    def _run_curl(self, command, destination, offset):
+        """curl's exit code; turning Work insights off stops it, and progress follows the file as it grows."""
+        if self.runner is not subprocess.run:  # tests and callers that inject a runner
+            try:
+                return self.runner(command, capture_output=True, text=True, timeout=6 * 3600).returncode
+            except (OSError, subprocess.SubprocessError):
+                raise SetupError("network", detail="curl") from None
+        try:
+            process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError:
+            raise SetupError("network", detail="curl") from None
+        try:
+            while process.poll() is None:
+                if self._cancel.wait(0.5):
+                    raise SetupError("cancelled")
+                if os.path.exists(destination):
+                    self._progress(offset + os.path.getsize(destination))
+            return process.returncode
+        finally:
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(10)
+                except subprocess.TimeoutExpired:
+                    process.kill()
 
     def _download_model(self):
         for name in os.listdir(self.cache_dir) if os.path.isdir(self.cache_dir) else ():

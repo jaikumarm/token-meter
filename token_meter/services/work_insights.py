@@ -1554,6 +1554,7 @@ class WorkInsightsService:
             try:
                 wait = self.step()
                 backoff = 1.0
+                self.error_at = ""  # recovered: the same failure point is logged again if it recurs
             except Exception as error:  # Supervisor: never let the worker die; record only where it failed.
                 site = error_site(error)
                 if site != self.error_at:

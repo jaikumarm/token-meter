@@ -7662,7 +7662,7 @@ function workSetupCopy(setup){
   downloading_model:['Setup','Downloading the labeling model',`${progress}${pace} · the download resumes if the connection drops.`],
   importing:['Setup','Preparing the model','Adding it to Ollama. This can take a few minutes.'],
   failed:['Setup',{network:'The download stopped',verify:'A download failed its check',disk_space:'Not enough disk space',memory:'Not enough memory on this Mac',ollama_start:'Ollama didn’t start',ollama_offline:'Ollama isn’t running',import:'Importing the model failed'}[setup.reason]||'Setup stopped',
-   [why,retry||({network:'Check the internet connection, then select Retry setup.',verify:'Select Retry setup to download it again.',disk_space:`Free up about ${workGigabytes(setup.needed_bytes)}, then select Retry setup.`,memory:'The labeling model needs a Mac with at least about 10 GB of memory, so nothing was downloaded.',ollama_start:'Select Retry setup to try again.',ollama_offline:'Start Ollama on this Mac (open the Ollama app or run ollama serve), then select Retry setup.',import:'Select Retry setup to try again.'}[setup.reason]||'Select Retry setup to try again.')].filter(Boolean).join(' ')],
+   [why,retry||({network:'Check the internet connection, then select Retry setup.',verify:'Select Retry setup to download it again.',disk_space:setup.needed_bytes?`Free up about ${workGigabytes(setup.needed_bytes)}, then select Retry setup.`:'Free up some disk space, then select Retry setup.',memory:'The labeling model needs a Mac with at least about 10 GB of memory, so nothing was downloaded.',ollama_start:'Select Retry setup to try again.',ollama_offline:'Start Ollama on this Mac (open the Ollama app or run ollama serve), then select Retry setup.',import:'Select Retry setup to try again.'}[setup.reason]||'Select Retry setup to try again.')].filter(Boolean).join(' ')],
  }[setup.state]||null;
 }
 // Which step is done, current, or failed; a failure belongs to the step that was running.
@@ -7670,7 +7670,7 @@ function renderWorkSetupSteps(setup,lastStep){
  const list=$('w-setup-steps'),bar=$('w-setup-bar');
  list.hidden=!setup;bar.hidden=!(setup&&setup.total_bytes&&['installing_ollama','downloading_model'].includes(setup.state));
  if(!setup)return;
- const order=['ollama','model','prepare','label'],current=setup.state==='failed'?lastStep:WORK_SETUP_STEP[setup.state];
+ const order=['ollama','model','prepare','label'],current=setup.state==='failed'?(WORK_SETUP_STEP[setup.failed_during]||lastStep):WORK_SETUP_STEP[setup.state];
  const at=Math.max(0,order.indexOf(current));
  list.querySelectorAll('li').forEach((item,index)=>{item.dataset.state=index<at?'done':index===at?(setup.state==='failed'?'failed':'current'):'';});
  if(!bar.hidden){const share=Math.min(100,Math.round(100*setup.done_bytes/setup.total_bytes));bar.querySelector('i').style.width=`${share}%`;bar.setAttribute('aria-valuenow',share);}

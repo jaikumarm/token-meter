@@ -372,6 +372,26 @@ class InternalErrorTests(unittest.TestCase):
         self.assertIn("work insights: internal error at KeyError at", err.getvalue())
         self.assertNotIn("secret", err.getvalue() + json.dumps(status))
 
+    def test_a_recovered_worker_logs_a_recurring_failure_again(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        service, values, clock = make_service(tmp.name)
+        stop = threading.Event()
+        runs = iter(["fail", "ok", "fail", "stop"])
+
+        def step():
+            run = next(runs)
+            if run == "stop":
+                stop.set()
+                return 0.0
+            if run == "fail":
+                raise KeyError("x")
+            return 0.0
+        service.step = step
+        with mock.patch("sys.stderr", new=__import__("io").StringIO()) as err:
+            service.run_forever(stop)
+        self.assertEqual(err.getvalue().count("work insights: internal error at"), 2)
+
     def test_error_site_names_the_innermost_token_meter_frame(self):
         try:
             W.question_for("nope", W.default_settings())

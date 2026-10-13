@@ -4,6 +4,7 @@ import json
 import os
 import plistlib
 import shutil
+import subprocess
 import tarfile
 import tempfile
 import threading
@@ -178,6 +179,10 @@ class WorkSetupTests(unittest.TestCase):
         attempts = [u for u in self.urls if u == S.OLLAMA_ARCHIVE_URL]
         self.assertEqual(len(attempts), S.DOWNLOAD_ATTEMPTS)
         self.assertEqual(sum(1 for c in self.commands if c[0] == S.CURL), 1)
+        curl = next(c for c in self.commands if c[0] == S.CURL)
+        self.assertEqual(curl[1], "--disable")  # ~/.curlrc is ignored
+        self.assertEqual(curl[curl.index("--proto") + 1], "=https")
+        self.assertEqual(curl[curl.index("--proto-redir") + 1], "=https")
         self.assertTrue(os.path.isfile(setup.binary))
 
     def test_a_download_that_never_matches_says_which_check_failed(self):
@@ -188,6 +193,72 @@ class WorkSetupTests(unittest.TestCase):
         status = setup.status()
         self.assertEqual((status["state"], status["reason"], status["detail"]), (S.FAILED, "verify", "hash"))
         self.assertEqual(status["retry_at"], 0)  # tests turn automatic retries off
+
+    def test_curl_starts_over_when_the_server_cannot_resume(self):
+        destination = os.path.join(self.tmp.name, "model.gguf")
+        good = b"model" * 10
+        with open(destination, "wb") as handle:
+            handle.write(good[:7])  # a partial file from an earlier try
+        calls = []
+
+        def runner(command, **kwargs):
+            calls.append(command)
+            if "--continue-at" in command:
+                return Run(33)
+            with open(command[command.index("--output") + 1], "wb") as handle:
+                handle.write(good)
+            return Run()
+        setup = self.make()
+        setup.runner = runner
+        setup._download_with_curl("https://example/model", destination, len(good),
+                                  "sha256:" + hashlib.sha256(good).hexdigest(), 0)
+        self.assertEqual(["--continue-at" in c for c in calls], [True, False])
+
+    def test_turning_off_stops_a_running_curl(self):
+        fake = os.path.join(self.tmp.name, "slow-curl")
+        with open(fake, "w") as handle:
+            handle.write("#!/bin/sh\nsleep 30\n")
+        os.chmod(fake, 0o755)
+        setup = self.make()
+        setup.runner = subprocess.run  # the real process path, which polls for cancel
+        threading.Timer(0.5, setup._cancel.set).start()
+        started = time.monotonic()
+        with mock.patch.object(S, "CURL", fake), self.assertRaises(S.SetupError) as caught:
+            setup._download_with_curl("https://example/model", os.path.join(self.tmp.name, "m"), 10, "sha256:x", 0)
+        self.assertEqual(caught.exception.reason, "cancelled")
+        self.assertLess(time.monotonic() - started, 5)
+
+    def test_a_fresh_run_restarts_the_retry_waits_and_reports_the_failed_step(self):
+        with mock.patch.object(S, "CLI_CANDIDATES", ()):
+            setup = self.make()
+            setup._failures = 4  # left over from an earlier spell
+            setup.start()
+            setup._thread.join(10)
+        status = setup.status()
+        self.assertEqual((status["state"], status["attempts"]), (S.FAILED, 1))
+        self.assertEqual(status["failed_during"], S.INSTALLING)
+
+    def test_retry_setup_right_after_a_final_failure_runs_again(self):
+        setup = self.make()
+        with setup._lock:
+            setup._state = dict(setup._state, state=S.FAILED, retry_at=0)
+        setup._thread = threading.Thread(target=lambda: time.sleep(0.2))
+        setup._thread.start()
+        self.assertTrue(setup.start())
+        self.assertTrue(setup._restart)
+        self.assertFalse(setup._retry_now.is_set())
+        setup._thread.join()
+
+    def test_a_full_disk_is_reported_as_disk_space(self):
+        import errno
+        setup = self.make()
+
+        def opener(request, timeout=0):
+            raise OSError(errno.ENOSPC, "No space left on device")
+        setup.opener = opener
+        with self.assertRaises(S.SetupError) as caught:
+            setup._download_once(S.OLLAMA_ARCHIVE_URL, os.path.join(self.tmp.name, "f"), 10, "sha256:x", 0)
+        self.assertEqual((caught.exception.reason, caught.exception.detail), ("disk_space", "disk"))
 
     def test_network_errors_carry_a_detail_code(self):
         import socket
