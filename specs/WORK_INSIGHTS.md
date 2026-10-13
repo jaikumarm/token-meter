@@ -241,9 +241,10 @@ sessions *started* in the range.
    reasoning effort per complexity group, and the grid. Both charts use the same three
    validated hues, cheap to expensive: teal (light models; low–medium effort),
    blue (standard; high), and amber (premium; xhigh, max, or ultra). Effort is
-   folded into those three bands for readability; the tables keep every level.
-   A request with no recorded effort ran at the app's default, so it is
-   **Default** (gray, "not recorded"): shown, never flagged, never compared.
+   folded into those bands for readability; the tables keep every level. A
+   Claude or Codex request with no recorded effort ran at the app's default, so
+   it gets a fourth band, **Default** (gray, "not recorded"): shown, never
+   flagged, never compared. Other apps never record effort and are left out.
    Striped segments are mismatches:
    premium models or xhigh/max/ultra effort on routine work, or light models on
    complex work whose pushback rate is above the median cell.
@@ -303,10 +304,11 @@ effort column shows its cost per request once. Effort means something different 
 columns are that model's own levels and levels are never compared across
 models. A cell with fewer than 20 labeled follow-ups shows a faint dot.
 Only requests with a complexity label count (Codex `none` is a level). A
-request with no recorded effort goes in a **default** column: it ran at the
-app's default level, which the trace does not name, so it is never compared
-with another level. An effort value that is not a known level is named as left
-out. A cell whose requests are all unpriced shows no cost rather than $0.
+Claude or Codex request with no recorded effort goes in a **default** column:
+it ran at the app's default level, which the trace does not name, so it is
+never compared with another level. Requests from apps that never record effort
+(Cursor, OpenCode, Kiro, and others), and effort values that are not a known
+level, are named as left out. A cell whose requests are all unpriced shows no cost rather than $0.
 Codex records effort per request; Claude Code records `perTurnEffort` (older
 builds: `effort`), which is empty when the default is in use.
 

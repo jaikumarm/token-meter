@@ -1900,7 +1900,9 @@ process.stdout.write(JSON.stringify(out));
         self.assertIn(' selected>other · Codex', out["switched"])
         self.assertEqual(out["switchedVerdicts"], "")  # no call: nothing to say, so nothing shown
         self.assertTrue(out["emptyHidden"])  # only models with labeled requests get the panel
-        self.assertIn('title="No effort recorded: the app&#39;s default level">default<small>$0.50/req</small>',
+        self.assertIn('class="workSizingHead workEffortHead fieldtip" role=columnheader tabindex=0 '
+                      'aria-description="No effort recorded: the app&#39;s default level" '
+                      'data-tip="No effort recorded: the app&#39;s default level">default<small>$0.50/req</small>',
                       out["defaultGrid"])
         # The Work poll re-renders often: unchanged cells are not rebuilt, and changed ones keep keyboard focus.
         self.assertEqual(out["samePollKeepsGrid"], "untouched")

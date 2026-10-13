@@ -264,6 +264,15 @@ class RequestAggregationTests(unittest.TestCase):
                                      requests_for=lambda ident, n: requests[ident.split("\0")[0]])
         self.assertEqual((drill["total"], drill["spend"]), (1, 3.0))
 
+    def test_apps_that_never_record_effort_are_left_out_not_default(self):
+        r = row("c", ["2026-09-10"], [4.0], model="claude-opus-5-5", runtime="Cursor")
+        r["provider"] = "cursor"
+        requests = {"c": [{"work_type": "feature", "area": "Frontend & UI", "complexity": "routine"}]}
+        built = self.build([r], requests)
+        self.assertEqual(built["effort_by_model"]["models"], [])
+        self.assertEqual(built["effort_by_model"]["unrecorded_spend"], 4.0)
+        self.assertEqual(built["right_sizing"]["effort"]["efforts"], [])
+
     def test_drill_down_returns_sessions_with_the_matching_spend(self):
         rows = [row("long", ["2026-09-10"] * 2, [10.0, 2.0]), row("doc", ["2026-09-11"], [3.0])]
         requests = {"long": [{"work_type": "feature", "area": "Frontend & UI"},

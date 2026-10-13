@@ -161,6 +161,7 @@ MAX_FIT_MODELS = 5
 MAX_TREND_MODELS = 6
 # A request with no recorded effort ran at the app's default, whose level is unknown: shown, never ranked.
 DEFAULT_EFFORT = "default"
+EFFORT_PROVIDERS = ("claude", "codex")  # the only traces that record a reasoning effort
 EFFORT_ORDER = (DEFAULT_EFFORT, "low", "medium", "high", "xhigh", "max", "ultra")
 HIGH_EFFORTS = ("xhigh", "max", "ultra")
 
@@ -336,6 +337,7 @@ def _session_requests(row, entry, own, days, area_names, tiers, unlabeled, sessi
     runtime = row.get("runtime") or ""
     model = primary_model(row)
     effort = str(row.get("reasoning_effort") or "").lower()
+    unset = DEFAULT_EFFORT if row.get("provider") in EFFORT_PROVIDERS else ""
     if not days:
         days = [(row.get("start") or "")[:10]]
         own = [{}]
@@ -354,7 +356,7 @@ def _session_requests(row, entry, own, days, area_names, tiers, unlabeled, sessi
             "ordinal": ordinal, "day": day or (row.get("start") or "")[:10], "cost": sum(spread.values()),
             "day_costs": spread,
             "model": request_model, "runtime": runtime, "tier": tiers.get((runtime, request_model)),
-            "effort": str(item.get("effort") or effort).lower() or DEFAULT_EFFORT,
+            "effort": str(item.get("effort") or effort).lower() or unset,
             "work_type": labels.get("work_type") or "",
             "area": area, "area_guess": bool(labels.get("area_guess")) and area in area_names,
             "complexity": labels.get("complexity") or "",
