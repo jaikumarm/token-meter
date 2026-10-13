@@ -8358,7 +8358,7 @@ def work_insights_status():
     status = work_insights_service().status()
     result = {key: status[key] for key in (
         "state", "reason", "pending", "queued", "eta_s", "retry_at", "paused_until",
-        "model", "model_versions", "labels")}
+        "model", "model_versions", "labels", "error_at")}
     if work_insights_supported():
         result["setup"] = work_setup().status()
         result["model_change"] = work_model_change_pending()

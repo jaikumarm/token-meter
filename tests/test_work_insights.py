@@ -1935,6 +1935,17 @@ class AppIntegrationTests(unittest.TestCase):
         self.settings = os.path.join(self.tmp.name, "settings.json")
         self.db = os.path.join(self.tmp.name, "work.sqlite3")
 
+    def test_the_app_status_carries_the_worker_error_site(self):
+        service = mock.Mock()
+        service.status.return_value = {"state": "backoff", "reason": "internal_error", "pending": 1, "queued": 1,
+                                       "eta_s": 0, "retry_at": 1.0, "paused_until": "", "model": "m",
+                                       "model_versions": 1, "labels": 0, "error_at": "KeyError at work.py:12"}
+        with mock.patch.object(meter, "work_insights_service_if_started", return_value=service), \
+                mock.patch.object(meter, "work_insights_service", return_value=service), \
+                mock.patch.object(meter, "work_insights_supported", return_value=False):
+            status = meter.work_insights_status()
+        self.assertEqual(status["error_at"], "KeyError at work.py:12")
+
     def test_disabled_status_shows_a_pending_delete_and_the_watcher_helper_finishes_it(self):
         marker = self.db + ".delete-pending"
         open(marker, "w").close()
