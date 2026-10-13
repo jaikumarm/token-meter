@@ -2971,6 +2971,21 @@ class ReviewFixTests(unittest.TestCase):
         asked = {i.turn_key: set(i.questions) for i in quiet.queue}
         self.assertTrue(set(W.REQUEST_QUESTIONS) <= asked[quiet._turn_key("s", 1)])
 
+    def test_a_held_request_never_hides_other_pending_work(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        service, _values, clock = make_service(tmp.name)
+        service.observe("s", [dict(turns("Fix the chart axis labels please")[0], ts=clock.now - 5)])
+        service.ledger.upsert_backlog(service.session_key("other"), 1, 3, clock.now)
+        self.assertEqual(service.status()["pending"], len(service.queue) + 3)
+        # Quiet time passed but not re-read yet: it is waiting to label, not held.
+        clock.now += W.ACTIVE_WINDOW_S + 10
+        self.assertEqual(service.status()["pending"], len(service.queue) + 3 + 1)
+        # Its row is gone (session deleted): the stale hold must not hide the other session's work.
+        service.forget("s")
+        self.assertEqual(service.status()["pending"], len(service.queue) + 3)
+        self.assertNotIn(service.session_key("s"), service._deferred)
+
     def test_never_labeled_work_goes_before_relabels(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)

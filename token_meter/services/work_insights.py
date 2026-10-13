@@ -919,6 +919,16 @@ class LabelLedger:
             row = connection.execute("SELECT COALESCE(SUM(pending), 0) AS n FROM work_backlog").fetchone()
         return int(row["n"])
 
+    def backlog_rows(self, keys):
+        """{session_key: (pending, added_at)} for the given sessions that still have a backlog row."""
+        keys = list(keys)
+        if not keys:
+            return {}
+        with self._connect() as connection:
+            return {r["session_key"]: (int(r["pending"]), int(r["added_at"])) for r in connection.execute(
+                f"SELECT session_key, pending, added_at FROM work_backlog WHERE session_key IN "
+                f"({','.join('?' * len(keys))})", keys)}
+
     def clear(self):
         self._remove_files()
         self.initialize()
@@ -1600,9 +1610,17 @@ class WorkInsightsService:
         settings = self.settings_provider()
         with self.lock:
             queued = len(self.queue)
-            held = sum(self._deferred.values())
+            deferred = dict(self._deferred)
         try:
-            backlog = max(0, (self.ledger.backlog_pending() if self.ledger else 0) - held)
+            backlog = self.ledger.backlog_pending() if self.ledger else 0
+            # A held request is not "left to label" while its row still waits for the session to go quiet.
+            rows = self.ledger.backlog_rows(deferred) if self.ledger else {}
+            now = self.clock()
+            backlog = max(0, backlog - sum(min(count, rows[key][0]) for key, count in deferred.items()
+                                           if key in rows and rows[key][1] > now))
+            with self.lock:
+                for key in deferred.keys() - rows.keys():  # its row is gone: nothing is held any more
+                    self._deferred.pop(key, None)
             mix = self.ledger.model_mix() if self.ledger else {}
         except sqlite3.Error:
             backlog, mix = 0, {}
