@@ -158,7 +158,8 @@ development set only and checked on separate test and held-out sets.
 Labels carry a per-question prompt version (`QUESTION_VERSIONS`, all `g1`);
 changing one relabels only that question, and older labels keep showing
 until replaced. Area labels count whenever their taxonomy hash
-matches. Cutoffs apply when labels are read, so changing one needs no
+matches the current areas, or an earlier default set with the same names
+(reworded descriptions), until they are relabeled. Cutoffs apply when labels are read, so changing one needs no
 relabeling. An area answer between 0.25 and the 0.4 cutoff is kept as a
 **low-confidence guess** (`area_guess`): it counts in that area, and the bar
 shows that spend lighter.

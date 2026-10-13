@@ -2895,6 +2895,31 @@ class ReviewFixTests(unittest.TestCase):
         service.labels_version += 1
         self.assertNotIn("area", service.snapshot().get(service.session_key("s2"), {}))
 
+    def test_area_labels_from_reworded_earlier_defaults_show_until_relabeled(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        service, values, clock = make_service(tmp.name)
+        earlier = [{"name": n, "description": d} for n, d in W.PREVIOUS_DEFAULT_AREAS[0]]
+        self.assertEqual([a["name"] for a in earlier], [a["name"] for a in values["areas"]])
+        self.assertNotEqual(W.taxonomy_hash(earlier), W.taxonomy_hash(values["areas"]))
+        key, turn = service.session_key("s1"), service._turn_key("s1", 0)
+        old_tag = f"p4:{W.taxonomy_hash(earlier)}"
+        service.ledger.record_label(turn, "area", key, "Docs & writing", 0.9, old_tag, "d", clock.now)
+        service.ledger.record_label(turn, "work_type", key, "docs", 0.9, "p4", "d", clock.now)
+        service.labels_version += 1
+        self.assertEqual(service.snapshot()[key]["area"], "Docs & writing")
+        self.assertEqual(service.session_requests("s1", 1)[0]["area"], "Docs & writing")
+
+        service.ledger.record_label(turn, "area", key, "Frontend & UI", 0.9,
+                                    W.question_tags(values)["area"], "g", clock.now - 10)
+        service.labels_version += 1
+        self.assertEqual(service.snapshot()[key]["area"], "Frontend & UI")
+
+        values["areas"] = [{"name": f"Area {i}", "description": "mine"} for i in range(len(earlier))]
+        service.ledger.record_label(turn, "area", key, "Docs & writing", 0.9, old_tag, "d", clock.now)
+        service.labels_version += 1
+        self.assertNotIn("area", service.snapshot().get(key, {}))
+
     def test_a_deliberate_save_of_the_old_default_names_is_kept(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)

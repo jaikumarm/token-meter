@@ -1622,7 +1622,11 @@ class WorkInsightsService:
             return cached[1]
         settings = self.settings_provider()
         tags = question_tags(settings)
-        area_hash = taxonomy_hash(settings["areas"])
+        names = tuple(area["name"] for area in settings["areas"])
+        # Reworded earlier defaults with the same names keep their labels until relabeled.
+        area_hashes = {taxonomy_hash(settings["areas"])} | {
+            taxonomy_hash([{"name": name, "description": description} for name, description in earlier])
+            for earlier in PREVIOUS_DEFAULT_AREAS if tuple(name for name, _ in earlier) == names}
         sessions = {}
         if self.ledger is None:
             return sessions
@@ -1635,7 +1639,7 @@ class WorkInsightsService:
         def usable(row):
             if row["question"] == "area":
                 # Any prompt version for the same areas counts; older versions show until relabeled.
-                return str(row["taxonomy"] or "").split(":")[-1] == area_hash
+                return str(row["taxonomy"] or "").split(":")[-1] in area_hashes
             return True
 
         # A recorded opener replaces other turns' labels only once it has its own outcome, so a
