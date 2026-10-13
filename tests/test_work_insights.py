@@ -1863,7 +1863,7 @@ function extract(name){let start=page.indexOf(`function ${name}(`);let i=page.in
 const nodes={};const $=id=>nodes[id]||(nodes[id]={innerHTML:'',textContent:'',hidden:false,style:{}});
 const escAt=page.indexOf('const esc=');eval(page.slice(escAt,page.indexOf(';\\n',escAt)+1).replace(/^const /,'var '));
 const f=v=>String(v),money=v=>'$'+Number(v).toFixed(2);
-var workEffortModel='';const WORK_EFFORT_ROWS={routine:'Routine',everyday:'Everyday',complex:'Complex+'};
+var workEffortModel='',workEffortGridHtml='',document={activeElement:null};const WORK_EFFORT_ROWS={routine:'Routine',everyday:'Everyday',complex:'Complex+'};
 eval(['workEffortRate','workEffortVerdict','renderWorkEffortModels'].map(extract).join('\\n'));
 const cell=(effort,requests,rate,samples,few,cpr)=>({effort,requests,spend:requests*(cpr??0.5),cost_per_request:requests?(cpr??0.5):null,rework:samples?{rate,samples,few_samples:few}:null});
 const model={model:'gpt',runtime:'Codex',efforts:['high','xhigh'],verdicts:[{kind:'lower',complexity:'everyday',lower:'high',higher:'xhigh',lower_rate:.09,higher_rate:.16,lower_samples:197,higher_samples:591,saving_per_request:.96,saving:720.25}],
@@ -1873,6 +1873,10 @@ renderWorkEffortModels(both);
 const out={grid:$('w-effort-grid').innerHTML,verdicts:$('w-effort-verdicts').innerHTML,note:$('w-effort-note').textContent,select:$('w-effort-model').innerHTML,cols:$('w-effort-grid').style.gridTemplateColumns,hidden:$('w-effort-models').hidden};
 const second=out.select.split('<option').find(part=>part.includes('>other · Codex')).match(/value="([^"]*)"/)[1].replace(/&quot;/g,'"');
 workEffortModel=second;renderWorkEffortModels(both);out.switched=$('w-effort-model').innerHTML;out.switchedVerdicts=$('w-effort-verdicts').innerHTML;
+const grid=$('w-effort-grid');grid.innerHTML='untouched';renderWorkEffortModels(both);out.samePollKeepsGrid=grid.innerHTML;
+const target={dataset:{cell:'everyday:high',detail:'Everyday at high: detail'},focus(){out.refocused=true;}};
+document.activeElement={dataset:{cell:'everyday:high'}};grid.contains=node=>node===document.activeElement;grid.querySelectorAll=()=>[{dataset:{cell:'routine:high'}},target];
+model.rows[1].cells[0].rework.rate=.1;renderWorkEffortModels(both);out.changedGrid=grid.innerHTML!=='untouched';out.detailAfterPoll=$('w-effort-detail').textContent;
 renderWorkEffortModels({effort_by_model:{models:[],unrecorded_spend:0}});out.emptyHidden=$('w-effort-models').hidden;
 process.stdout.write(JSON.stringify(out));
 """
@@ -1880,12 +1884,12 @@ process.stdout.write(JSON.stringify(out));
         self.assertFalse(out["hidden"])
         self.assertEqual(out["cols"], "110px repeat(2,minmax(72px,1fr))")
         # One number per cell; cost per request once per effort column (spend-weighted over its rows).
-        self.assertIn('role=cell tabindex=0 style="--heat:0.072"', out["grid"])
+        self.assertIn('role=cell tabindex=0 data-cell="everyday:high" style="--heat:0.072"', out["grid"])
         self.assertIn('aria-label="Everyday at high: 9% pushback · 197 labeled follow-ups · 269 requests · $1.50/request"', out["grid"])
         self.assertIn(">9%</div>", out["grid"])
         self.assertIn("high<small>$1.49/req</small>", out["grid"])
         self.assertIn("xhigh<small>$2.50/req</small>", out["grid"])
-        self.assertIn('data-few role=cell tabindex=0 title="Routine at high: too few labeled follow-ups (2)', out["grid"])
+        self.assertIn('data-few role=cell tabindex=0 data-cell="routine:high" title="Routine at high: too few labeled follow-ups (2)', out["grid"])
         self.assertIn('aria-label="Routine at high: too few labeled follow-ups (2)', out["grid"])
         self.assertIn('data-empty role=cell aria-label="No requests">·</div>', out["grid"])
         self.assertNotIn("follow-ups ·", out["grid"].split("title=")[0])  # no small print in the cells themselves
@@ -1895,6 +1899,15 @@ process.stdout.write(JSON.stringify(out));
         self.assertIn(' selected>other · Codex', out["switched"])
         self.assertEqual(out["switchedVerdicts"], "")  # no call: nothing to say, so nothing shown
         self.assertTrue(out["emptyHidden"])  # only models with a recorded reasoning effort get the panel
+        # The Work poll re-renders often: unchanged cells are not rebuilt, and changed ones keep keyboard focus.
+        self.assertEqual(out["samePollKeepsGrid"], "untouched")
+        self.assertTrue(out["changedGrid"])
+        self.assertTrue(out["refocused"])
+        self.assertEqual(out["detailAfterPoll"], "Everyday at high: detail")
+        self.assertIn('data-cell="everyday:high"', out["grid"])
+        handler = self.page[self.page.index("$('w-effort-model').addEventListener('change'"):]
+        self.assertLess(handler.index("$('w-effort-detail').textContent='';"), handler.index("renderWorkEffortModels(WORK.insights)"))
+        self.assertIn("id=w-effort-detail aria-hidden=true", self.page)  # the cell's own aria-label is what is announced
 
     def test_current_session_hints_keep_their_styles(self):
         # A merge once dropped these with an unrelated deleted block; the markup alone does not show it.

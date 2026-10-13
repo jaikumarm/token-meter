@@ -3224,7 +3224,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
    <div class=workEffortModels id=w-effort-models aria-labelledby=w-effort-models-title>
     <div class=workSubhead><h3 id=w-effort-models-title>Pushback by reasoning effort</h3><label class=filterControl><span>Model</span><select class=filterSelect id=w-effort-model aria-label="Model for pushback by reasoning effort"></select></label></div>
     <div class=workEffortGrid id=w-effort-grid role=table aria-label="Pushback by complexity and reasoning effort"></div>
-    <p class=workEffortDetail id=w-effort-detail aria-live=polite></p>
+    <p class=workEffortDetail id=w-effort-detail aria-hidden=true></p>
     <ul class=workEffortVerdicts id=w-effort-verdicts></ul>
     <p class=workEffortNote id=w-effort-note></p>
    </div>
@@ -8307,7 +8307,7 @@ function workSparkline(points){
  return `<svg class=workSuggestSpark viewBox="0 0 ${W} ${H+10}" role=img aria-label="Pushback rate by week"><polyline fill=none stroke="var(--warn)" stroke-width=2 stroke-linejoin=round points="${line}"/><circle cx="${x(usable.length-1)}" cy="${y(last.rate)}" r=3.5 fill="var(--warn)"/><text x=0 y="${H+9}" fill="var(--faint)" font-size=9>${esc(usable[0].label)}</text><text x="${W-2}" y="${H+9}" fill="var(--faint)" font-size=9 text-anchor=end>${esc(last.label)}</text></svg>`;
 }
 // Effort by model: one model at a time, because a level such as "high" means different things on different models.
-let workEffortModel=localStorage.getItem('tm_work_effort_model')||'';
+let workEffortModel=localStorage.getItem('tm_work_effort_model')||'',workEffortGridHtml='';
 const WORK_EFFORT_ROWS={routine:'Routine',everyday:'Everyday',complex:'Complex+'};
 function workEffortRate(rework){return rework?`${Math.round(rework.rate*100)}%`:'';}
 function workEffortVerdict(verdict){
@@ -8329,17 +8329,24 @@ function renderWorkEffortModels(insights){
  const columnCost=effort=>{let spend=0,requests=0;(chosen.rows||[]).forEach(row=>{const cell=(row.cells||[]).find(item=>item.effort===effort);if(cell&&cell.cost_per_request!=null){spend+=cell.spend;requests+=cell.requests;}});return requests?spend/requests:null;};
  grid.style.gridTemplateColumns=`110px repeat(${efforts.length},minmax(72px,1fr))`;
  const head=`<div role=row style="display:contents"><div class=workSizingHead role=columnheader></div>${efforts.map(effort=>{const cost=columnCost(effort);return `<div class="workSizingHead workEffortHead" role=columnheader>${esc(effort)}${cost!=null?`<small>${money(cost)}/req</small>`:''}</div>`;}).join('')}</div>`;
- grid.innerHTML=head+(chosen.rows||[]).map(row=>`<div role=row style="display:contents"><div class=workSizingRowHead role=rowheader>${esc(WORK_EFFORT_ROWS[row.complexity]||row.complexity)}</div>${(row.cells||[]).map(cell=>{
+ const html=head+(chosen.rows||[]).map(row=>`<div role=row style="display:contents"><div class=workSizingRowHead role=rowheader>${esc(WORK_EFFORT_ROWS[row.complexity]||row.complexity)}</div>${(row.cells||[]).map(cell=>{
   if(!cell.requests)return '<div class=workEffortCell data-empty role=cell aria-label="No requests">·</div>';
   const cost=cell.cost_per_request!=null?`${money(cell.cost_per_request)}/request`:'cost unavailable';
   const label=`${WORK_EFFORT_ROWS[row.complexity]||row.complexity} at ${cell.effort}: `;
-  if(!cell.rework||cell.rework.few_samples){const detail=`${label}too few labeled follow-ups (${cell.rework?.samples||0}) · ${f(cell.requests)} requests · ${cost}`;return `<div class=workEffortCell data-few role=cell tabindex=0 title="${esc(detail)}" aria-label="${esc(detail)}" data-detail="${esc(detail)}">·</div>`;}
+  if(!cell.rework||cell.rework.few_samples){const detail=`${label}too few labeled follow-ups (${cell.rework?.samples||0}) · ${f(cell.requests)} requests · ${cost}`;return `<div class=workEffortCell data-few role=cell tabindex=0 data-cell="${esc(row.complexity+':'+cell.effort)}" title="${esc(detail)}" aria-label="${esc(detail)}" data-detail="${esc(detail)}">·</div>`;}
   const heat=Math.min(.32,cell.rework.rate*.8).toFixed(3);
   const detail=`${label}${workEffortRate(cell.rework)} pushback · ${f(cell.rework.samples)} labeled follow-ups · ${f(cell.requests)} requests · ${cost}`;
-  return `<div class=workEffortCell role=cell tabindex=0 style="--heat:${heat}" title="${esc(detail)}" aria-label="${esc(detail)}" data-detail="${esc(detail)}">${workEffortRate(cell.rework)}</div>`;
+  return `<div class=workEffortCell role=cell tabindex=0 data-cell="${esc(row.complexity+':'+cell.effort)}" style="--heat:${heat}" title="${esc(detail)}" aria-label="${esc(detail)}" data-detail="${esc(detail)}">${workEffortRate(cell.rework)}</div>`;
  }).join('')}</div>`).join('');
+ // The Work poll re-renders every few seconds: leave unchanged cells alone, and keep focus on the same cell when they do change.
+ if(html!==workEffortGridHtml){
+  const focused=grid.contains?.(document.activeElement)?document.activeElement.dataset.cell:'';
+  grid.innerHTML=workEffortGridHtml=html;
+  const again=focused&&[...grid.querySelectorAll('[data-cell]')].find(node=>node.dataset.cell===focused);
+  if(again){again.focus();$('w-effort-detail').textContent=again.dataset.detail;}
+  else $('w-effort-detail').textContent='';
+ }
  const verdicts=chosen.verdicts||[];
- $('w-effort-detail').textContent='';
  $('w-effort-verdicts').innerHTML=verdicts.map(workEffortVerdict).join('');
  $('w-effort-note').textContent=`Pushback after each answer · estimates · faint dots: too few follow-ups${data.unrecorded_spend>0?` · ${money(data.unrecorded_spend)} without a recorded effort left out`:''}`;
 }
@@ -8350,6 +8357,7 @@ function renderWorkEffortModels(insights){
 }));
 $('w-effort-model').addEventListener('change',event=>{
  workEffortModel=event.target.value;localStorage.setItem('tm_work_effort_model',workEffortModel);
+ $('w-effort-detail').textContent='';
  if(WORK?.insights)renderWorkEffortModels(WORK.insights);
 });
 function renderWorkSuggestCards(insights){
