@@ -238,12 +238,34 @@ class SettingsValidationTests(unittest.TestCase):
                                          "ollama_url": "http://evil.example", "areas": [{"name": "x"}]})
         self.assertEqual(settings, W.default_settings())
 
-    def test_default_pace_is_gentle_and_stored_paces_are_kept(self):
-        self.assertEqual(W.default_settings()["rate_per_minute"], 5)
-        self.assertIn(5, W.RATE_CHOICES)
-        for stored in (5, 20, 60):
+    def test_default_pace_is_automatic_and_chosen_paces_are_kept(self):
+        self.assertEqual(W.default_settings()["rate_per_minute"], "auto")
+        self.assertIn("auto", W.RATE_CHOICES)
+        # 5 was the old default: saved before the pace version, it moves to automatic; chosen since, it stays.
+        self.assertEqual(W.normalize_settings({"rate_per_minute": 5})["rate_per_minute"], "auto")
+        self.assertEqual(W.normalize_settings({"rate_per_minute": 5, "pace_version": W.PACE_VERSION})
+                         ["rate_per_minute"], 5)
+        for stored in (10, 20, 60, "auto"):
             self.assertEqual(W.normalize_settings({"rate_per_minute": stored})["rate_per_minute"], stored)
-        self.assertEqual(W.normalize_settings({"rate_per_minute": 7})["rate_per_minute"], 5)
+        for bad in (7, True, "fast", None):
+            self.assertEqual(W.normalize_settings({"rate_per_minute": bad})["rate_per_minute"], "auto")
+
+    def test_automatic_pace_is_fast_on_a_quiet_mac_and_gentle_otherwise(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        service, values, _clock = make_service(tmp.name, {"rate_per_minute": "auto"})
+        for busy, expected in ((0.10, W.AUTO_FAST_RATE), (W.AUTO_QUIET_LIMIT + 0.01, W.AUTO_GENTLE_RATE),
+                               (None, W.AUTO_GENTLE_RATE)):
+            service.last_load = busy
+            self.assertEqual(service._pace(values), expected, busy)
+        values["rate_per_minute"] = 20
+        service.last_load = 0.1
+        self.assertEqual(service._pace(values), 20)  # a chosen pace is a fixed cap
+        service.load_probe = lambda: 0.2
+        service._throttle_reason(values)
+        self.assertEqual(service.last_load, 0.2)  # each busy check also sets the automatic pace
+        self.assertGreater(W.AUTO_FAST_RATE, W.AUTO_GENTLE_RATE)
+        self.assertLess(W.AUTO_QUIET_LIMIT, W.CPU_BUSY_LIMIT)
 
     def test_retired_defaults_move_to_gemma_and_custom_models_stay(self):
         for retired in ("token-meter-jet", "token-meter-jet:latest", "Token-Meter-Jet", "token-meter-winnow",
@@ -1624,6 +1646,22 @@ class AppContractTests(unittest.TestCase):
                        "possible_overthinking:'high effort on routine work'",
                        "<th>Suggestion</th>", "Model suggestions", "Reasoning suggestions"):
             self.assertIn(marker, page)
+
+    def test_pace_choice_round_trips_and_a_chosen_five_survives(self):
+        self.assertTrue(meter.set_work_insights_settings({"rate_per_minute": "auto"}, self.settings)["ok"])
+        self.assertEqual(meter.work_insights_settings(self.settings)["rate_per_minute"], "auto")
+        self.assertTrue(meter.set_work_insights_settings({"rate_per_minute": 5}, self.settings)["ok"])
+        self.assertEqual(meter.work_insights_settings(self.settings)["rate_per_minute"], 5)
+        for bad in ("fast", 7, True):
+            self.assertFalse(meter.set_work_insights_settings({"rate_per_minute": bad}, self.settings)["ok"])
+        self.assertIn("auto", meter.work_insights_public_settings(meter.work_insights_settings(self.settings))
+                      ["choices"]["rate_per_minute"])
+        with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "page.html"),
+                  encoding="utf-8") as handle:
+            page = handle.read()
+        self.assertIn("<option value=auto>Automatic (default)</option>", page)
+        self.assertNotIn("(default)</option><option value=10>", page)  # 5 is no longer the default
+        self.assertIn("rate_per_minute:event.target.value==='auto'?'auto':Number(event.target.value)", page)
 
     def test_settings_round_trip_validation_and_pause(self):
         result = meter.set_work_insights_settings({"enabled": True, "rate_per_minute": 40}, self.settings)

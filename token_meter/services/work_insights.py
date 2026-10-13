@@ -81,8 +81,13 @@ DEFAULT_MODEL = "token-meter-gemma"
 # Earlier default model names; saved settings that still name one move to the current default.
 LEGACY_DEFAULT_MODELS = ("token-meter-jet", "token-meter-winnow")
 DEFAULT_URL = "http://127.0.0.1:11434"
-RATE_CHOICES = (5, 10, 20, 40, 60)
-DEFAULT_RATE_PER_MINUTE = 5  # Gentle enough for a 4B model on a low-end laptop.
+RATE_CHOICES = ("auto", 5, 10, 20, 40, 60)
+DEFAULT_RATE_PER_MINUTE = "auto"
+# Automatic pace: as fast as the model answers while the CPU is quiet, gentle while the Mac is in use.
+AUTO_FAST_RATE = 60
+AUTO_GENTLE_RATE = 5  # gentle enough for a 4B model on a low-end laptop
+AUTO_QUIET_LIMIT = 0.35  # share of CPU time busy
+PACE_VERSION = 1  # saved with the pace; a 5 saved before it was the old default, not a choice
 BACKFILL_CHOICES = (30, 90, 365, 0)
 MIN_AREAS, MAX_AREAS = 2, 8
 RESERVED_AREA_NAMES = ("unclear", "pending", "no request text", "outside history", "not labeled yet",
@@ -396,6 +401,7 @@ def default_settings():
         "pause_on_battery": True,
         "live_notifications": True,
         "rate_per_minute": DEFAULT_RATE_PER_MINUTE,
+        "pace_version": PACE_VERSION,
         "backfill_days": 90,
         "model": DEFAULT_MODEL,
         "ollama_url": DEFAULT_URL,
@@ -420,8 +426,10 @@ def normalize_settings(raw):
         settings["pause_on_battery"] = raw["pause_on_battery"]
     if isinstance(raw.get("live_notifications"), bool):
         settings["live_notifications"] = raw["live_notifications"]
-    if raw.get("rate_per_minute") in RATE_CHOICES and not isinstance(raw.get("rate_per_minute"), bool):
-        settings["rate_per_minute"] = raw["rate_per_minute"]
+    rate = raw.get("rate_per_minute")
+    if rate in RATE_CHOICES and not isinstance(rate, bool) and not (
+            rate == 5 and raw.get("pace_version") != PACE_VERSION):
+        settings["rate_per_minute"] = rate
     if raw.get("backfill_days") in BACKFILL_CHOICES and not isinstance(raw.get("backfill_days"), bool):
         settings["backfill_days"] = raw["backfill_days"]
     model = str(raw.get("model") or "").strip()
@@ -979,6 +987,7 @@ class WorkInsightsService:
         self.clock = clock
         self.monotonic = monotonic
         self.load_probe = load_probe or CpuBusyProbe()
+        self.last_load = None
         self.power_probe = power_probe or (lambda: None)
         self.memory_probe = memory_probe or _default_memory_probe
         self.low_memory_strikes = 0
@@ -1332,11 +1341,19 @@ class WorkInsightsService:
         loaded = self.loaded and self.clock() - self.last_call_at < KEEP_ALIVE_S
         return "low_memory" if available < headroom + (0 if loaded else MODEL_MEMORY_BYTES) else ""
 
+    def _pace(self, settings):
+        """Model calls a minute: the chosen cap, or for automatic, fast while the last busy check was quiet."""
+        rate = settings["rate_per_minute"]
+        if rate != "auto":
+            return rate
+        quiet = self.last_load is not None and self.last_load <= AUTO_QUIET_LIMIT
+        return AUTO_FAST_RATE if quiet else AUTO_GENTLE_RATE
+
     def _throttle_reason(self, settings):
         memory = self._memory_short()
         if memory:
             return memory
-        load = self.load_probe()
+        load = self.last_load = self.load_probe()
         if load is not None and load > CPU_BUSY_LIMIT:
             return "system_busy"
         if settings["pause_on_battery"] and self.power_probe() == "battery":
@@ -1381,7 +1398,7 @@ class WorkInsightsService:
             if (not settings["enabled"] or is_paused(settings, self.clock())
                     or generation != self.generation):
                 return False
-            wait = self.pacer.wait_time(settings["rate_per_minute"])
+            wait = self.pacer.wait_time(self._pace(settings))
             if wait <= 0:
                 return True
             self.sleep(wait)
@@ -1637,7 +1654,7 @@ class WorkInsightsService:
         recent = [t for t in self._rate_window if t >= self.clock() - 300]
         elapsed = (recent[-1] - recent[0]) / 60.0 if len(recent) >= 5 else 0.0
         # An item takes three to seven model calls, so assume a fifth of the call rate until measured.
-        per_minute = (len(recent) - 1) / elapsed if elapsed > 0 else float(settings["rate_per_minute"]) / 5
+        per_minute = (len(recent) - 1) / elapsed if elapsed > 0 else float(self._pace(settings)) / 5
         return {
             "state": state,
             "reason": ("delete_pending" if self.delete_pending else

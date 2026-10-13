@@ -174,7 +174,11 @@ active before the history setting), and **Not labeled yet** (waiting in the
 queue). Only the last is real backlog; labeling progress counts only
 labelable sessions.
 
-The worker paces model calls (default 5 a minute; 5-60), pauses on battery,
+The worker paces model calls. The default, **Automatic**, allows 60 a minute
+while the last busy check found 35% or less of CPU time busy and 5 a minute
+otherwise (or when the reading is unknown); a fixed pace of 5-60 is a cap. A 5
+saved before the pace version was the old default and becomes Automatic. It
+pauses on battery,
 waits when more than 75% of all CPU time is busy (measured from the CPU tick
 counters since the last check; the load average counts waiting threads and
 reads high on an idle Mac with many apps open, so it is only a fallback where
@@ -198,7 +202,7 @@ the schedule, so loading and unloading cannot thrash; labeling resumes on
 its own once memory is free. The guard cannot stop other apps from using up
 memory; it only keeps the model out of the way. A substantive follow-up takes eight calls (two for area,
 one each for work type and complexity, and four pushback checks), so relabeling a
-long history at 5 a minute takes hours; a faster pace in Settings shortens it.
+long history at 5 a minute takes hours; Automatic runs faster while the Mac is quiet.
 The model stays loaded while work is queued or backlog is ready to load, and
 is unloaded from Ollama as soon as nothing is (and on pause or throttling),
 so its memory is free whenever nothing is waiting.

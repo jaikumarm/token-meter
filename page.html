@@ -3468,7 +3468,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     <div class=workSettingsGrid>
      <label class=settingsField><span>Model</span><input id=work-model spellcheck=false autocomplete=off maxlength=100></label>
      <label class=settingsField><span>Ollama URL</span><input id=work-url spellcheck=false autocomplete=off maxlength=120></label>
-     <label class=settingsField><span>Pace</span><select class=filterSelect id=work-rate><option value=5>5 labels / min (default)</option><option value=10>10 labels / min</option><option value=20>20 labels / min</option><option value=40>40 labels / min</option><option value=60>60 labels / min</option></select></label>
+     <label class=settingsField><span>Pace</span><select class=filterSelect id=work-rate aria-description="Automatic labels as fast as the model answers while this Mac is quiet and slows to 5 a minute while it is in use. A number is a fixed limit."><option value=auto>Automatic (default)</option><option value=5>5 labels / min</option><option value=10>10 labels / min</option><option value=20>20 labels / min</option><option value=40>40 labels / min</option><option value=60>60 labels / min</option></select></label>
      <label class=settingsField><span>History to label</span><select class=filterSelect id=work-backfill><option value=30>Last 30 days</option><option value=90>Last 90 days</option><option value=365>Last 365 days</option><option value=0>All history</option></select></label>
     </div>
     <div class=workSetupHint>Turning this on sets everything up in the background: Token Meter installs a pinned Ollama if this Mac doesn’t have one, downloads Google’s Gemma 4 E4B model (about 5 GB, Apache-2.0), adds it to Ollama, and deletes the download. It needs about 11 GB free while it sets up and about 5 GB after, and uses about 5.5 GB of memory while it labels.</div>
@@ -8618,7 +8618,7 @@ function renderWorkSettings(payload,{force=false}={}){
  $('work-enable-cta').hidden=Boolean(settings.enabled);
  $('work-enabled').checked=Boolean(settings.enabled);$('work-battery').checked=settings.pause_on_battery!==false;$('work-live-notify').checked=settings.live_notifications!==false;$('work-live-notify').disabled=!settings.enabled;$('work-live-notify').closest('label').title=settings.enabled?'':'Turn on labeling to get live-suggestion notifications.';
  $('work-model').value=settings.model||'';$('work-url').value=settings.ollama_url||'';
- $('work-rate').value=String(settings.rate_per_minute||5);$('work-backfill').value=String(settings.backfill_days??90);
+ $('work-rate').value=String(settings.rate_per_minute||'auto');$('work-backfill').value=String(settings.backfill_days??90);
  workAreasDraft=(settings.areas||[]).map(area=>({...area}));renderWorkAreas();
 }
 function workSettingsDraft(){
@@ -8668,7 +8668,7 @@ $('work-enable-button').addEventListener('click',()=>{const box=$('work-enabled'
 $('work-enabled').addEventListener('change',event=>saveWorkSettings({enabled:event.target.checked},event.target.checked?'On. Labeling starts in the background.':'Off. Labeling stopped.'));
 $('work-battery').addEventListener('change',event=>saveWorkSettings({pause_on_battery:event.target.checked}));
 $('work-live-notify').addEventListener('change',event=>saveWorkSettings({live_notifications:event.target.checked}));
-$('work-rate').addEventListener('change',event=>saveWorkSettings({rate_per_minute:Number(event.target.value)}));
+$('work-rate').addEventListener('change',event=>saveWorkSettings({rate_per_minute:event.target.value==='auto'?'auto':Number(event.target.value)}));
 $('work-backfill').addEventListener('change',event=>saveWorkSettings({backfill_days:Number(event.target.value)}));
 $('work-save').addEventListener('click',()=>{if(workSettingsDirty())saveWorkSettings(workSettingsDraft());});
 $('work-areas-reset').addEventListener('click',()=>saveWorkSettings({reset_areas:true},'Default areas restored.'));
