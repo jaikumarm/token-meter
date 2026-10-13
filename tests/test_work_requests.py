@@ -378,8 +378,12 @@ class ClaudeTurnEffortTests(unittest.TestCase):
                   "message": {"id": f"m{i}", "model": "claude-opus-5-5", "usage": {"output_tokens": 5},
                               "content": []}}, "o")
                 for i, effort in enumerate(("High", None, {"level": "max"}, "high; drop"))]
+        # Older Claude Code builds wrote the same value as "effort".
+        rows.append(({"type": "assistant", "effort": "xhigh", "timestamp": "2026-10-10T10:00:00Z",
+                      "message": {"id": "m9", "model": "claude-opus-5-5", "usage": {"output_tokens": 5},
+                                  "content": []}}, "o"))
         out = C.ClaudeRuntimeAdapter._logical_messages(rows, lambda value: 1.0, True)
-        self.assertEqual([record["effort"] for record in out], ["high", "", "", ""])
+        self.assertEqual([record["effort"] for record in out], ["high", "", "", "", "xhigh"])
 
 if __name__ == "__main__":
     unittest.main()

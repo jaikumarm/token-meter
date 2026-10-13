@@ -929,8 +929,9 @@ class ClaudeRuntimeAdapter:
                     "ts": timestamp_parser(row.get("timestamp")) or 0,
                     "last_ts": timestamp_parser(row.get("timestamp")) or 0,
                     "side": bool(row.get("isSidechain")),
-                    # Claude Code records the reasoning effort of a turn when one is set; unset stays unknown.
-                    "effort": _turn_effort(row.get("perTurnEffort")),
+                    # Claude Code records a turn's reasoning effort as perTurnEffort (older builds: effort)
+                    # when the app offers the setting; unset stays unknown.
+                    "effort": _turn_effort(row.get("perTurnEffort") or row.get("effort")),
                     "content": [],
                     "_owner_path": owner,
                 }

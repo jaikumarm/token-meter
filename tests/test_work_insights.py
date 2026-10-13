@@ -1807,7 +1807,7 @@ class SurfaceContractTests(unittest.TestCase):
         self.assertNotIn("--w1:#3987e5", self.page)
 
     def test_sizing_and_scorecard_numbers_match_their_labels(self):
-        for marker in ("biggest possible saving",
+        for marker in ("biggest saving",
                        "slice(rework.grain==='day'?-31:-26)",
                        "lowestCost=ranked.length>=2?",
                        "sessions started in this period",
@@ -1861,35 +1861,38 @@ process.stdout.write(JSON.stringify(out));
 const fs=require('fs');const page=fs.readFileSync(process.argv[1],'utf8');
 function extract(name){let start=page.indexOf(`function ${name}(`);let i=page.indexOf('{',start),depth=0;for(;i<page.length;i++){if(page[i]==='{')depth++;else if(page[i]==='}'&&--depth===0)return page.slice(start,i+1);}}
 const nodes={};const $=id=>nodes[id]||(nodes[id]={innerHTML:'',textContent:'',hidden:false,style:{}});
-const escAt=page.indexOf('const esc=');eval(page.slice(escAt,page.indexOf(';\\n',escAt)+1).replace(/^const /,'var '));const f=v=>String(v),money=v=>'$'+Number(v).toFixed(2);
+const escAt=page.indexOf('const esc=');eval(page.slice(escAt,page.indexOf(';\\n',escAt)+1).replace(/^const /,'var '));
+const f=v=>String(v),money=v=>'$'+Number(v).toFixed(2);
 var workEffortModel='';const WORK_EFFORT_ROWS={routine:'Routine',everyday:'Everyday',complex:'Complex+'};
 eval(['workEffortRate','workEffortVerdict','renderWorkEffortModels'].map(extract).join('\\n'));
-const cell=(effort,requests,rate,samples,few)=>({effort,requests,cost_per_request:requests?0.5:null,rework:samples?{rate,samples,few_samples:few}:null});
+const cell=(effort,requests,rate,samples,few,cpr)=>({effort,requests,spend:requests*(cpr??0.5),cost_per_request:requests?(cpr??0.5):null,rework:samples?{rate,samples,few_samples:few}:null});
 const model={model:'gpt',runtime:'Codex',efforts:['high','xhigh'],verdicts:[{kind:'lower',complexity:'everyday',lower:'high',higher:'xhigh',lower_rate:.09,higher_rate:.16,lower_samples:197,higher_samples:591,saving_per_request:.96,saving:720.25}],
- rows:[{complexity:'routine',cells:[cell('high',3,0,2,true),cell('xhigh',0)]},{complexity:'everyday',cells:[cell('high',269,.09,197,false),cell('xhigh',752,.16,591,false)]},{complexity:'complex',cells:[cell('high',0),cell('xhigh',0)]}]};
-renderWorkEffortModels({effort_by_model:{models:[model,{...model,model:'other',verdicts:[]}],unrecorded_spend:12.5}});
-const out={grid:$('w-effort-grid').innerHTML,verdicts:$('w-effort-verdicts').innerHTML,note:$('w-effort-note').textContent,chips:$('w-effort-model-chips').innerHTML,cols:$('w-effort-grid').style.gridTemplateColumns};
-// Choosing the second model: the key in its chip must round-trip through HTML and localStorage.
-const chip=$('w-effort-model-chips').innerHTML.split('<button').find(part=>part.includes('>other · Codex'));
-const attr=chip.match(/data-effort-model="([^"]*)"/)[1].replace(/&quot;/g,'"');
-workEffortModel=attr;renderWorkEffortModels({effort_by_model:{models:[model,{...model,model:'other',verdicts:[]}],unrecorded_spend:12.5}});
-out.switched=$('w-effort-model-chips').innerHTML;out.switchedVerdicts=$('w-effort-verdicts').innerHTML;
-renderWorkEffortModels({effort_by_model:{models:[],unrecorded_spend:0}});out.empty=$('w-effort-grid').innerHTML;
+ rows:[{complexity:'routine',cells:[cell('high',3,0,2,true),cell('xhigh',0)]},{complexity:'everyday',cells:[cell('high',269,.09,197,false,1.5),cell('xhigh',752,.16,591,false,2.5)]},{complexity:'complex',cells:[cell('high',0),cell('xhigh',0)]}]};
+const both={effort_by_model:{models:[model,{...model,model:'other',verdicts:[]}],unrecorded_spend:12.5}};
+renderWorkEffortModels(both);
+const out={grid:$('w-effort-grid').innerHTML,verdicts:$('w-effort-verdicts').innerHTML,note:$('w-effort-note').textContent,select:$('w-effort-model').innerHTML,cols:$('w-effort-grid').style.gridTemplateColumns,hidden:$('w-effort-models').hidden};
+const second=out.select.split('<option').find(part=>part.includes('>other · Codex')).match(/value="([^"]*)"/)[1].replace(/&quot;/g,'"');
+workEffortModel=second;renderWorkEffortModels(both);out.switched=$('w-effort-model').innerHTML;out.switchedVerdicts=$('w-effort-verdicts').innerHTML;
+renderWorkEffortModels({effort_by_model:{models:[],unrecorded_spend:0}});out.emptyHidden=$('w-effort-models').hidden;
 process.stdout.write(JSON.stringify(out));
 """
         out = json.loads(subprocess.run(["node", "-e", script, page], capture_output=True, text=True, check=True).stdout)
-        self.assertEqual(out["cols"], "110px repeat(2,minmax(96px,1fr))")
-        self.assertIn("<b>too few to tell</b><small>2 follow-ups", out["grid"])
-        self.assertIn("<b>9%</b><small>197 follow-ups · $0.50/request</small>", out["grid"])
-        self.assertIn("data-empty", out["grid"])
-        self.assertIn("<b>xhigh → high looks safe</b>. Pushback 9% at high vs 16% at xhigh, from 197 and 591", out["verdicts"])
-        self.assertIn("$720.25 over this period", out["verdicts"])
-        self.assertIn("$12.50 of labeled spend in this period has no recorded effort", out["note"])
-        self.assertIn('aria-pressed=true>gpt · Codex', out["chips"])
-        self.assertIn("No reasoning effort was recorded", out["empty"])
-        self.assertIn('aria-pressed=true>other · Codex', out["switched"])
-        self.assertIn("No call yet", out["switchedVerdicts"])
-        self.assertNotIn("\\u0000", self.page[self.page.index("function renderWorkEffortModels("):][:600])
+        self.assertFalse(out["hidden"])
+        self.assertEqual(out["cols"], "110px repeat(2,minmax(72px,1fr))")
+        # One number per cell; cost per request once per effort column (spend-weighted over its rows).
+        self.assertIn('role=cell style="--heat:0.072"', out["grid"])
+        self.assertIn(">9%</div>", out["grid"])
+        self.assertIn("high<small>$1.49/req</small>", out["grid"])
+        self.assertIn("xhigh<small>$2.50/req</small>", out["grid"])
+        self.assertIn('data-few role=cell title="Too few labeled follow-ups (2)', out["grid"])
+        self.assertIn('data-empty role=cell aria-label="No requests">·</div>', out["grid"])
+        self.assertNotIn("follow-ups ·", out["grid"].split("title=")[0])  # no small print in the cells themselves
+        self.assertIn("<b>Everyday: xhigh → high is safe</b> · 9% vs 16% pushback · saves $720.25", out["verdicts"])
+        self.assertIn("$12.50 without a recorded effort left out", out["note"])
+        self.assertIn(' selected>gpt · Codex', out["select"])
+        self.assertIn(' selected>other · Codex', out["switched"])
+        self.assertEqual(out["switchedVerdicts"], "")  # no call: nothing to say, so nothing shown
+        self.assertTrue(out["emptyHidden"])  # only models with a recorded reasoning effort get the panel
 
     def test_current_session_hints_keep_their_styles(self):
         # A merge once dropped these with an unrelated deleted block; the markup alone does not show it.
@@ -2339,17 +2342,17 @@ process.stdout.write(JSON.stringify(out));
         self.assertIn("Most pushback</span><b title=\"gpt-5.6-terra · Codex\">gpt-5.6-terra <s>25%</s>", outs["clear"])
         self.assertEqual(len(cards), 3)
         model, reasoning, pushback = cards
-        self.assertIn("$1,836<small>biggest possible saving · 4 suggestions", model)
+        self.assertIn("$1,836<small>biggest saving</small>", model)
         self.assertEqual(model.count("class=workDrillBtn"), 3)  # the top three by saving
         self.assertIn("gpt-5.6-sol<b>→</b>gpt-6-sol", model)
         self.assertIn("opus-4-8<b>→</b>opus-5-5", model)
         self.assertNotIn("premium models", model)  # fourth by saving, listed under See all
-        self.assertIn("+1 more · savings can overlap", model)
+        self.assertIn("<span>+1 more</span>", model)
+        self.assertIn('title="resolves', model)  # the resolve-rate note moved into the row's tooltip
         self.assertIn("155<small>routine requests ran at xhigh or max effort", reasoning)
         self.assertIn("&quot;effort&quot;:&quot;xhigh,max&quot;", reasoning)  # the drill filter, not the label
-        self.assertIn("xhigh 66%", reasoning)  # routine spend only; complex spend is left out
-        self.assertIn("other 0%", reasoning)
-        self.assertIn("$118 of $180 routine spend with effort recorded", reasoning)
+        self.assertIn("></i>xhigh</span>", reasoning)  # the bar's legend names levels; no percentages
+        self.assertNotIn("routine spend with effort recorded", reasoning)
         self.assertIn("15%<small>of 1,989 follow-ups pushed back", pushback)
         self.assertEqual(pushback.count("<text "), 2)  # weeks under 20 follow-ups are left off the trend
         # Only one model has 50+ judged follow-ups here, so there is no least/most to show.

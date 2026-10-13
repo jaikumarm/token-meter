@@ -1427,16 +1427,12 @@ tr[data-drill]:hover td,td:has(>.workDrillBtn):hover,.workSizingCell:has(>.workD
 .workMixLegend i.flag.effort{background:repeating-linear-gradient(135deg,var(--w-tier-premium) 0 4px,rgb(var(--bg-rgb)/.55) 4px 6px)}
 .workSuggestCards{display:grid;grid-template-columns:1.3fr 1fr 1fr;gap:14px;margin:16px 0 12px}
 .workEffortModels{margin:4px 0 14px;padding-top:12px;border-top:1px solid var(--line)}
-.workEffortChips{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 10px}
-.workEffortChips .chip{cursor:pointer;font:inherit;font-size:var(--fs-12)}
-.workEffortChips .chip[aria-pressed=true]{border-color:var(--accent);color:var(--fg);background:rgb(var(--signal-rgb)/.14)}
+.workEffortModels .workSubhead{align-items:center;margin-bottom:10px}
 .workEffortGrid{display:grid;gap:6px;overflow-x:auto}
-.workEffortCell{display:grid;gap:2px;min-width:0;padding:8px 10px;border:1px solid var(--line);border-radius:var(--radius-md);background:rgb(var(--red-rgb)/var(--heat,0))}
-.workEffortCell b{font-size:var(--fs-16);font-weight:var(--fw-heavy);font-variant-numeric:tabular-nums}
-.workEffortCell small{color:var(--dim);font-size:var(--fs-11);font-variant-numeric:tabular-nums}
-.workEffortCell[data-few]{border-style:dashed;background:none}
-.workEffortCell[data-few] b{color:var(--faint);font-size:var(--fs-12);font-weight:var(--fw-semibold)}
-.workEffortCell[data-empty]{border-color:transparent;background:none;color:var(--faint)}
+.workEffortHead{display:grid;gap:2px}
+.workEffortHead small{color:var(--faint);font-size:var(--fs-11);font-weight:var(--fw-medium);letter-spacing:0;text-transform:none}
+.workEffortCell{display:flex;align-items:center;justify-content:center;min-width:0;min-height:40px;border:1px solid var(--line);border-radius:var(--radius-md);background:rgb(var(--red-rgb)/var(--heat,0));font-size:var(--fs-16);font-weight:var(--fw-heavy);font-variant-numeric:tabular-nums}
+.workEffortCell[data-few],.workEffortCell[data-empty]{border-color:transparent;background:rgb(var(--tint-rgb)/.025);color:var(--faint);font-size:var(--fs-12);font-weight:var(--fw-medium)}
 .workEffortVerdicts{display:grid;gap:6px;margin:10px 0 0;padding:0;list-style:none;font-size:var(--fs-12)}
 .workEffortVerdicts li{padding:6px 10px;border-left:2px solid var(--line2);border-radius:0 var(--radius-sm) var(--radius-sm) 0;color:var(--dim)}
 .workEffortVerdicts li b{color:var(--fg)}
@@ -1448,7 +1444,6 @@ tr[data-drill]:hover td,td:has(>.workDrillBtn):hover,.workSizingCell:has(>.workD
 .workSuggestEyebrow i{width:8px;height:8px;border-radius:var(--radius-2xs);display:inline-block}
 .workSuggestHero{margin-top:12px;font:var(--fw-heavy) var(--fs-44)/1 var(--font-sans);letter-spacing:-.02em}
 .workSuggestHero small{display:block;margin-top:6px;color:var(--dim);font-size:var(--fs-13);font-weight:var(--fw-semibold);letter-spacing:0}
-.workSuggestLead{margin-top:6px;color:var(--dim);font-size:var(--fs-13)}
 .workSuggestRows{display:flex;flex-direction:column;gap:8px;margin-top:14px}
 .workSuggestRows .workDrillBtn{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:10px;padding:8px 10px;border-radius:var(--radius-md);background:rgb(var(--tint-rgb)/.03)}
 .workSuggestRows .workDrillBtn:hover,.workSuggestRows .workDrillBtn:focus-visible{background:rgb(var(--signal-rgb)/.08)}
@@ -3225,11 +3220,10 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
 	   </div>
 	  </section>
   <section class="card workSizing" id=w-module-sizing>
-   <div class=workCardHead><div><h2 class=fieldtip tabindex=0 aria-description="Spend by request complexity, split by model tier and reasoning effort. Savings are estimates." data-tip="Spend by request complexity, split by model tier and reasoning effort. Savings are estimates.">Right-sizing</h2><div class=subline>Where you could spend less without losing results. Savings are estimates.</div></div></div>
+   <div class=workCardHead><div><h2 class=fieldtip tabindex=0 aria-description="Spend by request complexity, split by model tier and reasoning effort. Savings are estimates." data-tip="Spend by request complexity, split by model tier and reasoning effort. Savings are estimates.">Right-sizing</h2><div class=subline>Where you could spend less · estimates</div></div></div>
    <div class=workSuggestCards id=w-suggest-cards></div>
    <div class=workEffortModels id=w-effort-models aria-labelledby=w-effort-models-title>
-    <div class=workSubhead><h3 id=w-effort-models-title>Effort by model</h3><span>pushback and cost per request at each reasoning effort, compared only within one model</span></div>
-    <div class=workEffortChips id=w-effort-model-chips role=group aria-label="Choose a model"></div>
+    <div class=workSubhead><h3 id=w-effort-models-title>Pushback by reasoning effort</h3><label class=filterControl><span>Model</span><select class=filterSelect id=w-effort-model aria-label="Model for pushback by reasoning effort"></select></label></div>
     <div class=workEffortGrid id=w-effort-grid role=table aria-label="Pushback by complexity and reasoning effort"></div>
     <ul class=workEffortVerdicts id=w-effort-verdicts></ul>
     <p class=workEffortNote id=w-effort-note></p>
@@ -3250,10 +3244,6 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
 	    <div class=workBarsList id=w-areas></div>
 	    <div class=workEnded><div class=workSubhead><h3>How sessions ended</h3><span id=w-outcome-total></span></div><div class=workOutcomeBar id=w-outcome-bar></div><div class=workOutcomeList id=w-outcomes></div><div class=workFootnote id=w-outcome-note></div></div>
 	   </div>
-	  </section>
-	  <section class="card workTagsCard" id=w-module-tags>
-	   <div class=workCardHead><div><h2 class=fieldtip tabindex=0 aria-description="Tags are worked out from each session's cost, active time, subagents, labels, and how it ended. A session can have several. Select a tag to open its sessions." data-tip="Tags are worked out from each session's cost, active time, subagents, labels, and how it ended. A session can have several. Select a tag to open its sessions.">Session tags</h2><div class=subline id=w-tags-note></div></div></div>
-	   <div class=workTagGrid id=w-tags></div>
 	  </section>
 	  <section class="card workRhythm" id=w-module-rhythm>
 	   <div class=workCardHead><div><h2 class=fieldtip tabindex=0 aria-description="When sessions started in this period, in this Mac's local time, and how often follow-ups pushed back at each time of day." data-tip="When sessions started in this period, in this Mac's local time, and how often follow-ups pushed back at each time of day.">When you work</h2><div class=subline id=w-rhythm-note></div></div></div>
@@ -3278,6 +3268,10 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
    <div class=workTableWrap><table class=workScore id=w-scorecard></table></div>
    <details class=workTableToggle><summary>By kind of work</summary><div class=workTableWrap><table class=tbl id=w-fit-table></table></div></details>
   </section>
+	  <section class="card workTagsCard" id=w-module-tags>
+	   <div class=workCardHead><div><h2 class=fieldtip tabindex=0 aria-description="Tags are worked out from each session's cost, active time, subagents, labels, and how it ended. A session can have several. Select a tag to open its sessions." data-tip="Tags are worked out from each session's cost, active time, subagents, labels, and how it ended. A session can have several. Select a tag to open its sessions.">Session tags</h2><div class=subline id=w-tags-note></div></div></div>
+	   <div class=workTagGrid id=w-tags></div>
+	  </section>
   <div class=efficiencyEvidence>Sessions started in this period · local model labels are estimates · text goes only to Ollama on this machine · select any bar or row to open its sessions.</div>
 	 </div>
 	 <div class=view id=view-git>
@@ -8337,43 +8331,37 @@ let workEffortModel=localStorage.getItem('tm_work_effort_model')||'';
 const WORK_EFFORT_ROWS={routine:'Routine',everyday:'Everyday',complex:'Complex+'};
 function workEffortRate(rework){return rework?`${Math.round(rework.rate*100)}%`:'';}
 function workEffortVerdict(verdict){
- const what=`<b>${esc(WORK_EFFORT_ROWS[verdict.complexity]||verdict.complexity)} work</b>`,rates=`Pushback ${workEffortRate({rate:verdict.lower_rate})} at ${esc(verdict.lower)} vs ${workEffortRate({rate:verdict.higher_rate})} at ${esc(verdict.higher)}, from ${f(verdict.lower_samples)} and ${f(verdict.higher_samples)} labeled follow-ups`;
- if(verdict.kind==='lower')return `<li data-kind=lower>${what}: <b>${esc(verdict.higher)} → ${esc(verdict.lower)} looks safe</b>. ${rates}; about ${money(verdict.saving_per_request)} less per request, ${money(verdict.saving)} over this period.</li>`;
- return `<li data-kind=raise>${what}: <b>${esc(verdict.lower)} effort looks too low</b>. ${rates}. Try ${esc(verdict.higher)} for this kind of work.</li>`;
+ const row=esc(WORK_EFFORT_ROWS[verdict.complexity]||verdict.complexity),evidence=`${workEffortRate({rate:verdict.lower_rate})} vs ${workEffortRate({rate:verdict.higher_rate})} pushback`;
+ const title=esc(`From ${verdict.lower_samples} and ${verdict.higher_samples} labeled follow-ups, 99% confidence`);
+ if(verdict.kind==='lower')return `<li data-kind=lower title="${title}"><b>${row}: ${esc(verdict.higher)} → ${esc(verdict.lower)} is safe</b> · ${evidence} · saves ${money(verdict.saving)}</li>`;
+ return `<li data-kind=raise title="${title}"><b>${row}: raise ${esc(verdict.lower)} → ${esc(verdict.higher)}</b> · ${evidence}</li>`;
 }
 function renderWorkEffortModels(insights){
  const data=insights?.effort_by_model||{},models=data.models||[],box=$('w-effort-models');
- box.hidden=!insights;
+ box.hidden=!insights||!models.length; // only models with a recorded reasoning effort
+ if(!models.length)return;
  // JSON rather than a NUL-joined key: the HTML parser rewrites NUL inside attributes.
  const key=model=>JSON.stringify([model.model,model.runtime]);
  const chosen=models.find(model=>key(model)===workEffortModel)||models[0];
- $('w-effort-model-chips').innerHTML=models.map(model=>`<button type=button class=chip data-effort-model="${esc(key(model))}" aria-pressed=${model===chosen}>${esc(model.model)} · ${esc(model.runtime)}</button>`).join('');
- const unrecorded=data.unrecorded_spend>0?`${money(data.unrecorded_spend)} of labeled spend in this period has no recorded effort and is left out; Claude records effort only when one is set.`:'';
- if(!chosen){
-  $('w-effort-grid').innerHTML='<div class=workEmpty>No reasoning effort was recorded for labeled requests in this period.</div>';
-  $('w-effort-verdicts').innerHTML='';$('w-effort-note').textContent=unrecorded;return;
- }
+ $('w-effort-model').innerHTML=models.map(model=>`<option value="${esc(key(model))}"${model===chosen?' selected':''}>${esc(model.model)} · ${esc(model.runtime)}</option>`).join('');
  const efforts=chosen.efforts||[],grid=$('w-effort-grid');
- grid.style.gridTemplateColumns=`110px repeat(${efforts.length},minmax(96px,1fr))`;
- const head=`<div role=row style="display:contents"><div class=workSizingHead role=columnheader></div>${efforts.map(effort=>`<div class=workSizingHead role=columnheader>${esc(effort)}</div>`).join('')}</div>`;
+ // One number per cell (pushback); cost per request sits once per effort column.
+ const columnCost=effort=>{let spend=0,requests=0;(chosen.rows||[]).forEach(row=>{const cell=(row.cells||[]).find(item=>item.effort===effort);if(cell&&cell.cost_per_request!=null){spend+=cell.spend;requests+=cell.requests;}});return requests?spend/requests:null;};
+ grid.style.gridTemplateColumns=`110px repeat(${efforts.length},minmax(72px,1fr))`;
+ const head=`<div role=row style="display:contents"><div class=workSizingHead role=columnheader></div>${efforts.map(effort=>{const cost=columnCost(effort);return `<div class="workSizingHead workEffortHead" role=columnheader>${esc(effort)}${cost!=null?`<small>${money(cost)}/req</small>`:''}</div>`;}).join('')}</div>`;
  grid.innerHTML=head+(chosen.rows||[]).map(row=>`<div role=row style="display:contents"><div class=workSizingRowHead role=rowheader>${esc(WORK_EFFORT_ROWS[row.complexity]||row.complexity)}</div>${(row.cells||[]).map(cell=>{
-  if(!cell.requests)return '<div class=workEffortCell data-empty role=cell>—</div>';
+  if(!cell.requests)return '<div class=workEffortCell data-empty role=cell aria-label="No requests">·</div>';
   const cost=cell.cost_per_request!=null?`${money(cell.cost_per_request)}/request`:'cost unavailable';
-  if(!cell.rework||cell.rework.few_samples){
-   const seen=cell.rework?.samples||0;
-   return `<div class=workEffortCell data-few role=cell title="Too few labeled follow-ups to read pushback"><b>too few to tell</b><small>${f(seen)} follow-up${seen===1?'':'s'} · ${esc(cost)}</small></div>`;
-  }
+  if(!cell.rework||cell.rework.few_samples)return `<div class=workEffortCell data-few role=cell title="${esc(`Too few labeled follow-ups (${cell.rework?.samples||0}) · ${f(cell.requests)} requests · ${cost}`)}">·</div>`;
   const heat=Math.min(.32,cell.rework.rate*.8).toFixed(3);
-  return `<div class=workEffortCell role=cell style="--heat:${heat}" title="${esc(`${workEffortRate(cell.rework)} pushback from ${cell.rework.samples} labeled follow-ups · ${f(cell.requests)} requests`)}"><b>${workEffortRate(cell.rework)}</b><small>${f(cell.rework.samples)} follow-ups · ${esc(cost)}</small></div>`;
+  return `<div class=workEffortCell role=cell style="--heat:${heat}" title="${esc(`${workEffortRate(cell.rework)} pushback · ${f(cell.rework.samples)} labeled follow-ups · ${f(cell.requests)} requests · ${cost}`)}">${workEffortRate(cell.rework)}</div>`;
  }).join('')}</div>`).join('');
  const verdicts=chosen.verdicts||[];
- $('w-effort-verdicts').innerHTML=verdicts.length?verdicts.map(workEffortVerdict).join(''):'<li>No call yet: neighbouring levels need at least 20 labeled follow-ups each and a clear difference (99% confidence).</li>';
- $('w-effort-note').textContent=['Pushback and costs are estimates from local labels; levels are compared only within this model and kind of work.',unrecorded].filter(Boolean).join(' ');
+ $('w-effort-verdicts').innerHTML=verdicts.map(workEffortVerdict).join('');
+ $('w-effort-note').textContent=`Pushback after each answer · estimates · faint dots: too few follow-ups${data.unrecorded_spend>0?` · ${money(data.unrecorded_spend)} without a recorded effort left out`:''}`;
 }
-document.addEventListener('click',event=>{
- const chip=event.target.closest('[data-effort-model]');
- if(!chip)return;
- workEffortModel=chip.dataset.effortModel;localStorage.setItem('tm_work_effort_model',workEffortModel);
+$('w-effort-model').addEventListener('change',event=>{
+ workEffortModel=event.target.value;localStorage.setItem('tm_work_effort_model',workEffortModel);
  if(WORK?.insights)renderWorkEffortModels(WORK.insights);
 });
 function renderWorkSuggestCards(insights){
@@ -8382,8 +8370,8 @@ function renderWorkSuggestCards(insights){
  // Models
  const models=rows.filter(item=>WORK_MODEL_SUGGESTIONS.includes(item.kind)).sort((a,b)=>(b.saving||0)-(a.saving||0));
  const best=models.find(item=>(item.saving||0)>0);
- const modelRows=models.slice(0,3).map(item=>{const swap=workModelSwap(item);return `<button type=button class=workDrillBtn${drill(item)}><span class=workSwap>${esc(swap.from)}<b>→</b>${esc(swap.to)}<em>${esc(swap.note)}</em></span><span class=workSwapSave>${item.saving>0?workDollars(item.saving):'--'}</span></button>`;}).join('');
- const modelCard=`<div class=workSuggestCard><div class=workSuggestEyebrow><i style="background:var(--good)"></i>Model suggestions</div>${models.length?`<div class=workSuggestHero>${best?`${workDollars(best.saving)}<small>biggest possible saving · ${models.length} suggestion${models.length===1?'':'s'}</small>`:`${models.length}<small>model suggestion${models.length===1?'':'s'}</small>`}</div><div class=workSuggestRows>${modelRows}</div><div class=workSuggestFoot><span>${models.length>3?`+${models.length-3} more · `:''}savings can overlap</span><button type=button data-open-sizing-tables>See all</button></div>`:'<div class=workSuggestEmpty>No model changes suggested for this period.</div>'}</div>`;
+ const modelRows=models.slice(0,3).map(item=>{const swap=workModelSwap(item);return `<button type=button class=workDrillBtn${drill(item)} title="${esc(swap.note)}"><span class=workSwap>${esc(swap.from)}<b>→</b>${esc(swap.to)}</span><span class=workSwapSave>${item.saving>0?workDollars(item.saving):'--'}</span></button>`;}).join('');
+ const modelCard=`<div class=workSuggestCard><div class=workSuggestEyebrow><i style="background:var(--good)"></i>Model suggestions</div>${models.length?`<div class=workSuggestHero>${best?`${workDollars(best.saving)}<small>biggest saving</small>`:`${models.length}<small>model suggestion${models.length===1?'':'s'}</small>`}</div><div class=workSuggestRows>${modelRows}</div><div class=workSuggestFoot><span>${models.length>3?`+${models.length-3} more`:''}</span><button type=button data-open-sizing-tables>See all</button></div>`:'<div class=workSuggestEmpty>No model changes suggested for this period.</div>'}</div>`;
  // Reasoning
  // Several high levels can be flagged at once (for example xhigh and max): count them together.
  const efforts=rows.filter(item=>item.kind==='effort_routine').sort((a,b)=>(b.spend||0)-(a.spend||0));
@@ -8393,8 +8381,8 @@ function renderWorkSuggestCards(insights){
  const routineSpend=cells.reduce((sum,cell)=>sum+cell.spend,0),shades=['var(--reason)','var(--w-routine-2)','var(--w-routine-3)','var(--w-routine-4)'];
  const shown=cells.slice(0,3),rest=routineSpend-shown.reduce((sum,cell)=>sum+cell.spend,0);
  const parts=[...shown.map(cell=>({label:cell.effort||'unknown',spend:cell.spend})),...(rest>0?[{label:'other',spend:rest}]:[])];
- const bar=routineSpend?`<div class=workSuggestBar role=img aria-label="Routine spend by reasoning effort">${parts.map((part,index)=>`<span style="flex:${part.spend.toFixed(4)};background:${shades[index]}"></span>`).join('')}</div><div class=workSuggestLegend>${parts.map((part,index)=>`<span><i style="background:${shades[index]}"></i>${esc(part.label)} ${workPercent(part.spend/routineSpend)}</span>`).join('')}</div>`:'';
- const effortCard=`<div class=workSuggestCard><div class=workSuggestEyebrow><i style="background:var(--reason)"></i>Reasoning suggestions</div>${effort?`<div class=workSuggestHero>${(effort.requests||0).toLocaleString()}<small>routine request${effort.requests===1?'':'s'} ran at ${esc(effort.label)} effort</small></div><div class=workSuggestLead>Try a lower effort for routine work</div>`:`<div class=workSuggestEmpty>No reasoning changes suggested for this period.</div>`}${bar}<div class=workSuggestFoot><span>${effort?`${workDollars(effort.spend)} of ${workDollars(routineSpend)} routine spend with effort recorded`:routineSpend?`${workDollars(routineSpend)} routine spend with effort recorded`:''}</span>${effort&&drill(effort)?`<button type=button${drill(effort)}>Open requests</button>`:''}</div></div>`;
+ const bar=routineSpend?`<div class=workSuggestBar role=img aria-label="Routine spend by reasoning effort">${parts.map((part,index)=>`<span style="flex:${part.spend.toFixed(4)};background:${shades[index]}"></span>`).join('')}</div><div class=workSuggestLegend>${parts.map((part,index)=>`<span><i style="background:${shades[index]}"></i>${esc(part.label)}</span>`).join('')}</div>`:'';
+ const effortCard=`<div class=workSuggestCard><div class=workSuggestEyebrow><i style="background:var(--reason)"></i>Reasoning suggestions</div>${effort?`<div class=workSuggestHero>${(effort.requests||0).toLocaleString()}<small>routine request${effort.requests===1?'':'s'} ran at ${esc(effort.label)} effort</small></div>`:`<div class=workSuggestEmpty>No reasoning changes suggested for this period.</div>`}${bar}<div class=workSuggestFoot><span></span>${effort&&drill(effort)?`<button type=button${drill(effort)}>Open requests</button>`:''}</div></div>`;
  // Pushback
  const rework=insights?.rework||{},overall=rework.overall||{};
  const weekly=(rework.weekly||[]).filter(point=>point.samples>=20).map(point=>({rate:point.rate,label:workMonthName(point.week,{year:false})}));
@@ -8467,7 +8455,7 @@ const WORK_TAG_INFO={
 function renderWorkTagCards(insights){
  const tags=insights?.tags||{},items=tags.items||[],thresholds=tags.thresholds||{},host=$('w-tags');
  const sessions=insights?.coverage?.sessions||0;
- $('w-tags-note').textContent=items.length?`${sessions.toLocaleString()} sessions started in this period · a session can have several tags`:'';
+ $('w-tags-note').textContent=items.length?`${sessions.toLocaleString()} sessions`:'';
  host.innerHTML=items.length?items.map(item=>{
   const [name,describe,tone]=WORK_TAG_INFO[item.tag]||[item.tag,()=>'','var(--w-unclear)'];
   const stats=[money(item.spend),item.share!=null?`${workPercent(item.share)} of spend`:'',item.resolved_rate!=null&&item.judged_sessions>=5?`${workPercent(item.resolved_rate)} resolved`:''].filter(Boolean).join(' · ');

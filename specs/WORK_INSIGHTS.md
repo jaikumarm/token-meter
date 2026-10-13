@@ -291,17 +291,19 @@ spend, and capped at 8. Savings are estimates and can overlap.
 
 ### Effort by model
 
-Under the Right-sizing cards, one model at a time (scoped by app, top five by
-spend among models with recorded effort) shows a complexity × reasoning-effort
-matrix: pushback rate (shaded by rate), labeled follow-ups, and cost per
-request in each cell. Effort means something different on each model, so
+Under the Right-sizing cards, "Pushback by reasoning effort" shows one model
+at a time, chosen from a dropdown (scoped by app, top five by spend among
+models with recorded effort; the panel is hidden when no model has one), as a
+complexity × reasoning-effort matrix. Each cell holds one number, the pushback
+rate, shaded by rate, with follow-ups, requests, and cost in its tooltip; each
+effort column shows its cost per request once. Effort means something different on each model, so
 columns are that model's own levels and levels are never compared across
-models. A cell with fewer than 20 labeled follow-ups reads "too few to tell".
+models. A cell with fewer than 20 labeled follow-ups shows a faint dot.
 Only requests with a complexity label and a recorded effort count (Codex
 `none` is a level); the rest of the labeled spend is named as left out. A cell
 whose requests are all unpriced shows no cost rather than $0. Codex records effort per request; Claude
-Code records `perTurnEffort` only when an effort is set, so Claude models
-appear once one is.
+Code records `perTurnEffort` (older builds: `effort`) only where the app
+offers the setting, so Claude models appear once one is recorded.
 
 Verdicts compare levels next to each other among the model's own levels,
 within one complexity row, when both have at least 20 labeled follow-ups and a
