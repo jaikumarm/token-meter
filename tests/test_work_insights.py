@@ -1857,6 +1857,34 @@ process.stdout.write(JSON.stringify(out));
         self.assertLess(self.page.index("let pendingSettingsScroll=null;"), self.page.index("function applyHashRoute("))
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_work_page_says_results_fill_in_as_labeling_finishes(self):
+        page_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "page.html")
+        script = """
+const fs=require('fs');const page=fs.readFileSync(process.argv[1],'utf8');
+let start=page.indexOf('function workProgressNote(');let i=page.indexOf('{',start),depth=0;for(;i<page.length;i++){if(page[i]==='{')depth++;else if(page[i]==='}'&&--depth===0)break;}
+eval(page.slice(start,i+1));
+const cov=(labeled)=>({sessions:120,no_text_sessions:10,outside_sessions:10,labeled_sessions:labeled});
+process.stdout.write(JSON.stringify({
+ none:workProgressNote({enabled:true},{pending:3863},cov(0),true),
+ partial:workProgressNote({enabled:true},{pending:1},cov(81),true),
+ done:workProgressNote({enabled:true},{pending:0},cov(100),true),
+ off:workProgressNote({enabled:false},{pending:5},cov(0),true),
+ loading:workProgressNote({enabled:true},{pending:5},cov(0),false),
+}));
+"""
+        out = json.loads(subprocess.run(["node", "-e", script, page_path], capture_output=True, text=True,
+                                        check=True).stdout)
+        self.assertEqual(out["none"][0], "Results appear as labeling finishes")
+        self.assertIn("3,863 requests are left to label.", out["none"][1])
+        self.assertEqual(out["partial"][0], "Results are still filling in")
+        self.assertIn("81% of labelable sessions", out["partial"][1])
+        self.assertIn("1 request is left to label.", out["partial"][1])
+        self.assertIsNone(out["done"])
+        self.assertIsNone(out["off"])  # the status card already says it is off
+        self.assertIsNone(out["loading"])
+        with open(page_path, encoding="utf-8") as handle:
+            self.assertIn('<section class="card emptyState workProgressNote" id=w-progress-note', handle.read())
+
     def test_work_settings_save_is_live_only_with_unsaved_changes(self):
         page_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "page.html")
         script = """

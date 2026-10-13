@@ -781,6 +781,7 @@ select option:checked{background-color:var(--panel3)}
 .badge{font-size:var(--fs-11);color:var(--dim);background:rgb(var(--tint-rgb)/.045);border:1px solid var(--line);padding:3px 6px;border-radius:var(--radius-sm);box-shadow:var(--inset)}
 /* == Components: shared building blocks. :where() gives them zero specificity, so any screen rule overrides them. They own identity (color, type, tracking), not layout. == */
 :where(.emptyState){display:grid;place-items:center;align-content:center;gap:4px;padding:18px;color:var(--dim);font-size:var(--fs-12);line-height:1.45;text-align:center}
+:where(.emptyState)[hidden]{display:none}
 :where(.emptyState>strong,.emptyState>h3){display:block;margin:0;color:var(--fg);font-size:var(--fs-13)}
 :where(.emptyState>p){max-width:56ch;margin:0 auto}
 :where(.metric){min-width:0}
@@ -1342,6 +1343,7 @@ body.spectrumApp .spectrumPageHead h1{background:linear-gradient(100deg,var(--fg
 .workTableWrap .tbl th{position:sticky;top:0;z-index:1;background:var(--panel);white-space:nowrap}
 .workTableWrap .tbl td{vertical-align:middle}
 .workMuted{color:var(--faint)}
+.workProgressNote{margin:0}
 .workEmpty{padding:18px 4px;color:var(--faint);font-size:var(--fs-12);text-align:center}
 .workGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:10px;align-items:stretch}
 .workGrid>.card{display:flex;flex-direction:column;margin:0}
@@ -3239,6 +3241,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     <button class=tbtn id=w-open-settings type=button>Settings</button>
 	   </div>
 	  </section>
+  <section class="card emptyState workProgressNote" id=w-progress-note aria-live=polite hidden><strong id=w-progress-title></strong><p id=w-progress-detail></p></section>
   <section class="card workSizing" id=w-module-sizing>
    <div class=workCardHead><div><h2 class=fieldtip tabindex=0 aria-description="Spend by request complexity, split by model tier and reasoning effort. Savings are estimates." data-tip="Spend by request complexity, split by model tier and reasoning effort. Savings are estimates.">Right-sizing</h2><div class=subline>Where you could spend less · estimates</div></div></div>
    <div class=workSuggestCards id=w-suggest-cards></div>
@@ -8150,6 +8153,16 @@ async function refreshWorkStatus(){
   if(payload.status?.setup?.state==='ready')loadWork();
  }catch(error){}
 }
+// The charts read only labeled requests, so say so until labeling catches up.
+function workProgressNote(settings,status,coverage,hasInsights){
+ const labelable=Math.max(0,(coverage.sessions||0)-(coverage.no_text_sessions||0)-(coverage.outside_sessions||0));
+ const labeled=coverage.labeled_sessions||0;
+ if(!settings.enabled||!hasInsights||(labeled>=labelable&&!status.pending))return null;
+ const left=status.pending?` ${status.pending.toLocaleString()} request${status.pending===1?' is':'s are'} left to label.`:'';
+ if(!labeled)return['Results appear as labeling finishes',`No session in this period is labeled yet, so the charts below are empty for now. They fill in as the local model labels your requests.${left}`];
+ const share=labelable?Math.floor(100*labeled/labelable):100;
+ return['Results are still filling in',`${share}% of labelable sessions in this period are labeled, so the charts below are partial and update as labeling continues. Sessions not labeled yet show in gray as “Not labeled yet”.${left}`];
+}
 function renderWorkStatus(payload){
  const status=payload?.status||{},settings=payload?.settings||{},coverage=payload?.insights?.coverage||{};
  const state=status.reason==='delete_pending'?'storage_error':settings.enabled?status.state||'idle':'disabled';
@@ -8173,6 +8186,9 @@ function renderWorkStatus(payload){
  const off=!settings.enabled;$('w-turn-on').hidden=!off;$('w-open-settings').hidden=off;
  const pill=$('w-state');pill.dataset.state=setupCopy?(setup.state==='failed'?'setup_needed':'running'):state;pill.textContent=shown[0];
  $('w-status-title').textContent=shown[1];$('w-status-detail').textContent=shown[2];
+ const note=workProgressNote(settings,status,coverage,Boolean(payload?.insights));
+ $('w-progress-note').hidden=!note;
+ if(note){$('w-progress-title').textContent=note[0];$('w-progress-detail').textContent=note[1];}
  if(setup&&WORK_SETUP_STEP[setup.state])workSetupLastStep=WORK_SETUP_STEP[setup.state];
  renderWorkSetupSteps(setupCopy?setup:null,workSetupLastStep);
  const setupState=status.setup?.state;
