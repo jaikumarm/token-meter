@@ -1815,6 +1815,15 @@ class SurfaceContractTests(unittest.TestCase):
             self.assertIn(marker, self.page)
         self.assertNotIn("rows.reduce((sum,item)=>sum+(item.spend||0),0)", self.page)
 
+    def test_current_session_hints_keep_their_styles(self):
+        # A merge once dropped these with an unrelated deleted block; the markup alone does not show it.
+        for rule in (".currentSessionHints{display:grid;gap:6px;margin-top:14px}",
+                     ".currentSessionHint{display:-webkit-box;min-width:0;overflow:hidden;",
+                     "-webkit-line-clamp:2}",
+                     ".currentSessionHint[data-kind=premium_routine],.currentSessionHint[data-kind=effort_routine],"
+                     ".currentSessionHint[data-kind=long_thread]{border-left-color:var(--signal);"):
+            self.assertIn(rule, self.page)
+
     def test_a_green_button_turns_work_insights_on(self):
         # Settings: a prominent button while off, which flips the same toggle the checkbox saves.
         self.assertIn('<button class="tbtn go" id=work-enable-button type=button>Turn on Work insights</button>', self.page)
