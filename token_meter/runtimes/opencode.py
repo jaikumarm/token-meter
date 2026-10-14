@@ -170,6 +170,40 @@ def _compact_text(value, limit=90):
     return value[:limit - 1] + "…" if len(value) > limit else value
 
 
+# OpenCode's own storage migration appended a machine-generated notice to user
+# message text when an attachment's payload could not be carried across, and the
+# notice is stored verbatim in the message row's `text`. Without this, the Work
+# insights classifier is asked to classify OpenCode's migration notice instead of
+# the request. Measured read-only over a real database: 396 occurrences across 229
+# V2 user prompts, and 64 of them landed inside the 90-character preview the
+# classifier actually sees.
+#
+# Two shape facts drive the pattern. The migration appended the notice inline as
+# often as it appended it on its own line, so it is matched anywhere rather than
+# only at a line boundary. And a payload path can itself contain "[" (for example
+# `app/for/[slug] (text/plain)`), so the payload cannot be bounded by the first
+# "]": it runs to the media type, which is the machine-emitted suffix that
+# separates a real notice from a user merely quoting the phrase.
+ATTACHMENT_MIGRATION_NOTICE = re.compile(
+    r"\[Attachment unavailable after migration:[^\n]*"
+    r"\([a-z]+/[a-z0-9.+_-]+\)\]"
+)
+
+
+def _strip_harness_text(value):
+    """Remove OpenCode's injected scaffolding from one user request.
+
+    Returns the request with every recognised injection removed. Only markers
+    whose provenance is established are removed here; a user's own words are
+    never matched. An empty result means the message was scaffolding only, and
+    the caller must treat that as no request at all rather than emitting an
+    empty turn.
+    """
+    if not value:
+        return ""
+    return ATTACHMENT_MIGRATION_NOTICE.sub("", value)
+
+
 def _json_object(value, default=None):
     if isinstance(value, bytes):
         try:
@@ -1313,6 +1347,15 @@ class OpenCodeRuntimeAdapter:
                 if not (isinstance(request_text, str) and request_text.strip()):
                     request_text = data.get("text")
                 if isinstance(request_text, str) and request_text.strip():
+                    # Strip before the cap and the compaction. The preview keeps
+                    # only the first 90 characters, so a leading injection would
+                    # otherwise be the whole thing the classifier ever sees, and
+                    # capping first could leave the survivor mostly scaffolding.
+                    # Scaffolding on its own is not a request, so a turn is
+                    # emitted only when something of the user's own survives.
+                    request_text = _strip_harness_text(request_text)
+                    if not request_text.strip():
+                        continue
                     work_turns.append({
                         "ts": created_ms / 1000.0 if created_ms else 0,
                         "text": compact_text(

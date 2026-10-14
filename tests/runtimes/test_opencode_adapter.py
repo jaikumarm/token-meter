@@ -1007,6 +1007,128 @@ class OpenCodeV2AdapterTests(unittest.TestCase):
 
         self.assertEqual([turn["text"] for turn in captured], ["private prompt"])
 
+    def _add_v2_user_text(self, seq, created, text):
+        with contextlib.closing(sqlite3.connect(self.db_path)) as conn, conn:
+            conn.execute(
+                "INSERT INTO session_message VALUES (?,?,?,?,?,?,?)",
+                (f"strip-{seq}", "ses_root", "user", seq, created, created,
+                 json.dumps({"text": text, "time": {"created": created}})),
+            )
+
+    def test_leading_attachment_notice_is_stripped_before_the_preview(self):
+        # The migration led with its notice; the classifier must still see the
+        # request behind it, not the notice.
+        self._add_v2_user_text(
+            8, 8_000,
+            "[Attachment unavailable after migration: docs/plan.md (text/plain)]\n\n"
+            "add a regression test for the spend page",
+        )
+
+        captured, _ = self._captured_turns()
+
+        self.assertEqual(
+            [turn["text"] for turn in captured],
+            ["private prompt", "add a regression test for the spend page"],
+        )
+
+    def test_trailing_attachment_notice_is_stripped(self):
+        # The migration appended the notice, sometimes inline rather than on its
+        # own line. Both shapes must leave the request alone.
+        for seq, text in (
+            (9, "run the unit suite\n\n"
+                "[Attachment unavailable after migration: README.md (text/plain)]"),
+            (10, "run the unit suite "
+                "[Attachment unavailable after migration: README.md (text/plain)]"),
+        ):
+            self._add_v2_user_text(seq, seq * 1_000, text)
+
+        captured, _ = self._captured_turns()
+
+        self.assertEqual(
+            [turn["text"] for turn in captured],
+            ["private prompt", "run the unit suite", "run the unit suite"],
+        )
+
+    def test_attachment_notice_covering_the_whole_preview_yields_the_users_words(self):
+        # The case that motivated the work: the injection was long enough to be
+        # all the classifier would ever have seen, so the preview has to become
+        # the user's text rather than the notice.
+        notices = "".join(
+            "[Attachment unavailable after migration: "
+            "docs/generated/module-number-{}.md (text/plain)]\n".format(index)
+            for index in range(6)
+        )
+        self._add_v2_user_text(11, 11_000, notices + "now bump the version constant")
+
+        captured, _ = self._captured_turns()
+
+        self.assertGreater(len(notices), 90)
+        self.assertEqual(captured[-1]["text"], "now bump the version constant")
+
+    def test_request_that_is_only_harness_scaffolding_emits_no_turn(self):
+        # Scaffolding alone is not a request. Emitting an empty turn would hand
+        # the classifier a blank and spend a turn's budget on nothing.
+        self._add_v2_user_text(
+            12, 12_000,
+            "[Attachment unavailable after migration: a.md (text/plain)]\n"
+            "[Attachment unavailable after migration: b.md (text/plain)]",
+        )
+
+        captured, row = self._captured_turns()
+
+        self.assertEqual([turn["text"] for turn in captured], ["private prompt"])
+        self.assertEqual(row["_work_turn_days"], ["day"])
+
+    def test_user_authored_markers_are_not_stripped(self):
+        # Over-stripping is a data-loss bug: these are all things a user can
+        # plausibly have typed or pasted, and their disappearance would be worse
+        # than the injection this fix removes.
+        typed = (
+            "why does my prompt show [Attachment unavailable after migration: ...]"
+            " after migration?",
+            "what does <system-reminder> mean in an OpenCode session?",
+            "append --target <path> and read <content> from the file",
+            "<objective>\nplan the work\n\n<execution_context>\nmake build test lint pass\n",
+        )
+        for offset, text in enumerate(typed):
+            self._add_v2_user_text(13 + offset, (13 + offset) * 1_000, text)
+
+        captured, _ = self._captured_turns()
+
+        # Previews compact whitespace, so compare against the compacted form.
+        self.assertEqual(
+            [turn["text"] for turn in captured],
+            ["private prompt"] + [" ".join(text.split()) for text in typed],
+        )
+
+    def test_injection_larger_than_the_preview_cannot_displace_the_request(self):
+        # The preview is 90 characters. A long run of injected notices ahead of a
+        # short real request must not be what fills that budget, which only
+        # holds if stripping runs before compaction.
+        notices = "".join(
+            "[Attachment unavailable after migration: "
+            "vendor/bundle/large-module-{}.ts (text/plain)]\n".format(index)
+            for index in range(40)
+        )
+        self._add_v2_user_text(20, 20_000, notices + "rename the flag to --dry-run")
+
+        captured, _ = self._captured_turns()
+
+        self.assertGreater(len(notices), 90)
+        self.assertEqual(captured[-1]["text"], "rename the flag to --dry-run")
+
+    def test_clean_requests_are_untouched_by_the_harness_strip(self):
+        # No injection means no change: a short request passes through exactly,
+        # and a long one still compacts to the bounded 90-character preview.
+        self._add_v2_user_text(21, 21_000, "ship the release")
+        self._add_v2_user_text(22, 22_000, "word " * 60)
+
+        captured, _ = self._captured_turns()
+
+        self.assertEqual(captured[-2]["text"], "ship the release")
+        self.assertEqual(len(captured[-1]["text"]), 90)
+        self.assertTrue(captured[-1]["text"].endswith("…"))
+
     def test_v2_summary_succeeds_without_a_part_table(self):
         with contextlib.closing(self.adapter.connection()) as conn:
             tables = {
