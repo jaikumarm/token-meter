@@ -3168,10 +3168,14 @@ _pi_native_adapters = {}
 
 def _pi_compatibility():
     return {
+        "work_insights_enabled": work_insights_enabled,
+        "attach_work_requests": attach_work_requests,
+        "pi_work_actions": pi_work_actions,
         "add_model_daily": add_model_daily,
         "add_model_summary": add_model_summary,
         "analysis_block": analysis_block,
         "build_state": build_state,
+        "compact_text": compact_text,
         "context_sample_limit": CURRENT_SESSION_CONTEXT_SAMPLES,
         "metric_availability": metric_availability,
         "summarize_tool_evidence": summarize_tool_evidence,
@@ -4848,6 +4852,21 @@ def codex_work_actions(objs):
             actions.extend(_work_evidence.code_actions(code or arguments, ts))
         else:
             actions.append(_work_evidence.tool_action(name, payload.get("arguments") or payload.get("input"), ts))
+    return actions
+
+
+def pi_work_actions(turns):
+    """Tool calls in a Pi session as Work evidence, kept content-free.
+
+    Pi's adapter keeps only a normalized tool name and kind, never the call's
+    arguments, so each action carries the kind and its turn's timestamp and no
+    edited paths or command kinds.
+    """
+    actions = []
+    for turn in turns or ():
+        ts = float(turn.get("end") or turn.get("start") or 0)
+        for tool in turn.get("tools") or ():
+            actions.append(_work_evidence.tool_action(tool.get("name"), None, ts))
     return actions
 
 
