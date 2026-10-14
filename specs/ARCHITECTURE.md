@@ -91,9 +91,10 @@ reopens raw traces; it consumes cached summaries. OpenCode database access and
 Cursor shared-state enrichment are query-only. OpenCode storage is versioned:
 when the database exposes the V2 `session_v2` + `session_message` store the
 adapter reads it preferentially (messages are ordered by the per-session `seq`
-counter and tool/reasoning evidence lives inline in the assistant message's
-`data.content[]`), and otherwise it reads the legacy `session`/`message`/`part`
-tables as a backward-compatible fallback. Both paths stay read-only and
+counter, tool/reasoning evidence lives inline in the assistant message's
+`data.content[]`, and a user message's typed request lives in that message
+row's own `data.text`), and otherwise it reads the legacy `session`/`message`/
+`part` tables as a backward-compatible fallback. Both paths stay read-only and
 content-free; V2-only semantics without a domain field (`workspace_id`,
 `time_suspended`, `idle_outcome`, fork lineage) are preserved as-is rather than
 invented into the domain. Claude Desktop joins metadata to

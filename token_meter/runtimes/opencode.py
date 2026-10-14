@@ -3,10 +3,15 @@
 OpenCode storage is versioned. When the database exposes the V2 store
 (`session_v2` + `session_message`), every read path prefers it; V1 databases
 (`session` + `message` + `part`) keep the legacy read path unchanged. Access is
-always read-only and never returns message content. A user's own request text is
-read in both schemas, but only for Work insights: from the message row's string
-`content` in V1 and from its `text` in V2. The `part` table belongs to V1; its
-ids are not a declared relationship with V2 messages.
+always read-only and never returns message content.
+
+A user's own request text is read in both schemas, but only for Work insights,
+and the two read paths do not agree on where it lives. The legacy summary reads
+the message row's own string `content` in V1 and that same row's own `text` in
+V2. The detail path never reads `content` at all: it prefers a V1 user
+message's `part` rows and falls back to that message's `text`, which is the
+whole of V2. `part` belongs to V1, and its ids are not a declared relationship
+with V2 messages.
 """
 
 import contextlib
@@ -47,6 +52,12 @@ from token_meter.domain.usage import (
 
 DETAIL_MESSAGE_LIMIT = 200
 SUMMARY_MESSAGE_LIMIT = 500
+# A queued request is compacted to a short preview, so only the leading slice of
+# a typed request is ever needed. Cap it before compaction, whose whitespace
+# collapse would otherwise split and rejoin the whole prompt once per row across
+# the bounded summary window. Collapsing can only shorten a slice, never lengthen
+# it, so anything past the cap cannot reach the preview.
+WORK_REQUEST_TEXT_CAP = 8 * 1024
 # Bound for walking session.parent_id chains. Real nesting is shallow; the bound
 # keeps a malformed or cyclic chain from costing more than a few lookups.
 MAX_SESSION_ANCESTRY = 32
@@ -1295,17 +1306,19 @@ class OpenCodeRuntimeAdapter:
             completed_ms = int_value(time_obj.get("completed"))
             if role == "user":
                 last_user_ms = created_ms
-                # A V1 request is the message's own string content and keeps
-                # precedence. V2 has no `content`; it inlines the request the user
-                # typed in the message row's own `text`, which also survives
-                # migration better than the stale V1 `part` rows.
-                content = data.get("content")
-                if not (isinstance(content, str) and content.strip()):
-                    content = data.get("text")
-                if isinstance(content, str) and content.strip():
+                # V1 keeps the typed request in the message row's own string
+                # `content`; V2 has no `content` and keeps it in the same row's
+                # own `text`. `part` is V1's text store and is not read here.
+                request_text = data.get("content")
+                if not (isinstance(request_text, str) and request_text.strip()):
+                    request_text = data.get("text")
+                if isinstance(request_text, str) and request_text.strip():
                     work_turns.append({
                         "ts": created_ms / 1000.0 if created_ms else 0,
-                        "text": compact_text(content, 90), "model": model,
+                        "text": compact_text(
+                            request_text[:WORK_REQUEST_TEXT_CAP], 90,
+                        ),
+                        "model": model,
                     })
                 continue
             if role != "assistant":
