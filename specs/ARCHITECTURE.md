@@ -94,7 +94,8 @@ adapter reads it preferentially (messages are ordered by the per-session `seq`
 counter, tool/reasoning evidence lives inline in the assistant message's
 `data.content[]`, and a user message's typed request lives in that message
 row's own `data.text`), and otherwise it reads the legacy `session`/`message`/
-`part` tables as a backward-compatible fallback. Both paths stay read-only and
+`part` tables as a backward-compatible fallback. Both paths stay read-only, and
+apart from the bounded Work-insights request text named above they stay
 content-free; V2-only semantics without a domain field (`workspace_id`,
 `time_suspended`, `idle_outcome`, fork lineage) are preserved as-is rather than
 invented into the domain. Claude Desktop joins metadata to
