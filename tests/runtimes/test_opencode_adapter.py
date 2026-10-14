@@ -33,9 +33,11 @@ CREATE TABLE part (
 """
 
 # OpenCode's V2 storage: sessions live in session_v2 (title is nullable) and
-# messages replace message + part with one session_message table whose assistant
-# rows carry tool and reasoning evidence inline in data.content[]. There is no
-# V2 part table.
+# messages replace the V1 message table with one session_message table whose
+# assistant rows carry tool and reasoning evidence inline in data.content[] and
+# whose user rows carry the typed request inline in data.text. V2 has no part
+# store; `part` belongs to V1 and is only added here to prove the V2 read path
+# does not depend on it.
 V2_SCHEMA = """
 CREATE TABLE session_v2 (
   id TEXT PRIMARY KEY, project_id TEXT NOT NULL, workspace_id TEXT,
@@ -56,6 +58,15 @@ CREATE TABLE session_message (
   id TEXT PRIMARY KEY, session_id TEXT NOT NULL, type TEXT NOT NULL,
   seq INTEGER NOT NULL, time_created INTEGER NOT NULL,
   time_updated INTEGER NOT NULL, data TEXT NOT NULL
+);
+"""
+
+# The V1 part table, present in a migrated database alongside the V2 store.
+# Most of its text parts are synthetic tool echoes and injected file blobs.
+V2_PART_SCHEMA = """
+CREATE TABLE IF NOT EXISTS part (
+  id TEXT PRIMARY KEY, session_id TEXT, message_id TEXT, data TEXT,
+  time_created INTEGER, time_updated INTEGER
 );
 """
 
@@ -290,6 +301,10 @@ class OpenCodeRuntimeAdapterTests(unittest.TestCase):
                 )
         captured = []
         compat = meter._opencode_compatibility()
+        # Priced events are Work-only extraction, so the adapter must be told the
+        # feature is on; otherwise the assertion reads this machine's settings
+        # file instead of the adapter's behavior.
+        compat["work_insights_enabled"] = lambda: True
 
         def attach(row, turns, events=(), actions=()):
             captured.extend(turns)
@@ -303,6 +318,38 @@ class OpenCodeRuntimeAdapterTests(unittest.TestCase):
         self.assertEqual(len(captured), 8)
         self.assertEqual(row["_work_turn_days"], ["day"] * 8)
         self.assertEqual(row["_work_events"], 1)  # each assistant message is a priced event for the cost split
+
+    def test_v1_message_content_still_wins_over_other_text(self):
+        # V1 keeps the typed request in the message's own string content, and
+        # that path is unchanged: a same-message `text` field and a text part
+        # must not displace it.
+        with contextlib.closing(sqlite3.connect(self.db_path)) as conn, conn:
+            conn.execute(
+                "UPDATE message SET data=? WHERE id='user-1'",
+                (json.dumps({
+                    "role": "user", "content": "private prompt",
+                    "text": "stale text field",
+                    "time": {"created": 1_000},
+                }),),
+            )
+            conn.execute(
+                "INSERT INTO part VALUES (?,?,?,?,?,?)",
+                ("part-user", "session-1", "user-1",
+                 json.dumps({"type": "text", "text": "part text is not the request"}),
+                 1_000, 1_000),
+            )
+        captured = []
+        compat = meter._opencode_compatibility()
+        compat["work_insights_enabled"] = lambda: True
+
+        def attach(row, turns, events=(), actions=()):
+            captured.extend(turns)
+            return row
+        compat["attach_work_requests"] = attach
+        self.adapter.compatibility = compat
+        self.adapter.summarize_legacy(self._source("session-1", legacy=True))
+
+        self.assertEqual([turn["text"] for turn in captured], ["private prompt"])
 
     def test_archived_ancestor_excludes_descendants_from_discovery(self):
         with contextlib.closing(sqlite3.connect(self.db_path)) as conn, conn:
@@ -535,6 +582,25 @@ class OpenCodeV2AdapterTests(unittest.TestCase):
                 [row.get("id") if legacy else row.session_id for row in rows],
             )
         )
+
+    def _captured_turns(self, session_id="ses_root"):
+        """Summarize one session with the typed-request queue captured.
+
+        Work insights are forced on so the capture does not depend on the
+        machine's own settings file.
+        """
+        captured = []
+        compat = meter._opencode_compatibility()
+        compat["work_insights_enabled"] = lambda: True
+
+        def attach(row, turns, events=(), actions=()):
+            captured.extend(turns)
+            row["_work_turn_days"] = ["day"] * len(turns)
+            return row
+        compat["attach_work_requests"] = attach
+        self.adapter.compatibility = compat
+        row = self.adapter.summarize_legacy(self._source(session_id, legacy=True))
+        return captured, row
 
     def test_v2_database_is_detected_and_partial_migration_stays_v1(self):
         with contextlib.closing(self.adapter.connection()) as conn:
@@ -774,6 +840,75 @@ class OpenCodeV2AdapterTests(unittest.TestCase):
             DiscoveryContext(home=str(self.root)))[0], DetailLevel.FULL)
         self.assertEqual(result.usage.cost_usd.value, 0.25)
         self.assertEqual(result.usage.output_tokens.value, 5)
+
+    def test_v2_work_turns_read_the_user_prompt_from_the_message_row(self):
+        # V2 has no `content` on a user message; the request the user typed is
+        # the message row's own `text`, and it is compacted like any other
+        # typed request.
+        with contextlib.closing(sqlite3.connect(self.db_path)) as conn, conn:
+            conn.execute(
+                "INSERT INTO session_message VALUES (?,?,?,?,?,?,?)",
+                ("m7", "ses_root", "user", 7, 7_000, 7_000, json.dumps({
+                    "text": "word " * 60,
+                    "time": {"created": 7_000},
+                })),
+            )
+
+        captured, row = self._captured_turns()
+
+        self.assertEqual(len(captured), 2)
+        first, second = captured
+        self.assertEqual(first["text"], "private prompt")
+        self.assertEqual(first["ts"], 1.0)
+        self.assertEqual(first["model"], "model-x")
+        # Long requests stay compacted to the bounded request preview.
+        self.assertEqual(second["ts"], 7.0)
+        self.assertEqual(len(second["text"]), 90)
+        self.assertTrue(second["text"].endswith("…"))
+        self.assertEqual(row["_work_turn_days"], ["day", "day"])
+        self.assertEqual(row["turns"], 3)
+
+    def test_v2_work_turns_ignore_the_v1_part_table(self):
+        # `part` is V1's store. Its rows can share ids with V2 messages by
+        # accident, and most of its text parts are synthetic tool echoes and
+        # injected file blobs, so a V2 read must never reach into it.
+        with contextlib.closing(sqlite3.connect(self.db_path)) as conn, conn:
+            conn.executescript(V2_PART_SCHEMA)
+            conn.execute(
+                "INSERT INTO part VALUES (?,?,?,?,?,?)",
+                ("p1", "ses_root", "m1",
+                 json.dumps({"type": "text", "synthetic": True,
+                             "text": "Called the Read tool with the following "
+                                     "input: {'path': 'secret-path'}"}),
+                 1_000, 1_000),
+            )
+            conn.execute(
+                "INSERT INTO part VALUES (?,?,?,?,?,?)",
+                ("p2", "ses_root", "m1",
+                 json.dumps({"type": "text", "text": "stale V1 part text"}),
+                 1_100, 1_100),
+            )
+
+        captured, _ = self._captured_turns()
+
+        self.assertEqual([turn["text"] for turn in captured], ["private prompt"])
+
+    def test_v2_summary_succeeds_without_a_part_table(self):
+        with contextlib.closing(self.adapter.connection()) as conn:
+            tables = {
+                row[0] for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )
+            }
+        self.assertNotIn("part", tables)
+
+        captured, row = self._captured_turns()
+
+        # Nothing about the summary depends on the V1 part table.
+        self.assertEqual([turn["text"] for turn in captured], ["private prompt"])
+        self.assertEqual(row["turns"], 3)
+        self.assertEqual(row["cost"], 0.25)
+        self.assertEqual(sorted(row["models"]), ["model-x", "model-y"])
 
     def test_v2_connection_is_query_only(self):
         with contextlib.closing(self.adapter.connection()) as conn:

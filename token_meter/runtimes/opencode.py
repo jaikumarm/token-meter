@@ -3,7 +3,10 @@
 OpenCode storage is versioned. When the database exposes the V2 store
 (`session_v2` + `session_message`), every read path prefers it; V1 databases
 (`session` + `message` + `part`) keep the legacy read path unchanged. Access is
-always read-only and never returns message content.
+always read-only and never returns message content. A user's own request text is
+read in both schemas, but only for Work insights: from the message row's string
+`content` in V1 and from its `text` in V2. The `part` table belongs to V1; its
+ids are not a declared relationship with V2 messages.
 """
 
 import contextlib
@@ -49,9 +52,10 @@ SUMMARY_MESSAGE_LIMIT = 500
 MAX_SESSION_ANCESTRY = 32
 
 # OpenCode storage schemas. V1 stores sessions, messages, and parts in separate
-# tables; V2 (2026-10) stores sessions in `session_v2` and folds messages and
-# parts into `session_message`, with tool and reasoning evidence inlined in the
-# assistant message's `data.content[]` array. A V2 database is preferred whenever
+# tables; V2 (2026-10) stores sessions in `session_v2` and messages in
+# `session_message`, with tool and reasoning evidence inlined in the assistant
+# message's `data.content[]` array and the typed request in the user message's
+# own `data.text`. `part` stays a V1 table. A V2 database is preferred whenever
 # it exists; V1 remains the fallback for pre-migration databases.
 V2_SESSION_TABLE = "session_v2"
 V2_MESSAGE_TABLE = "session_message"
@@ -816,9 +820,9 @@ class OpenCodeRuntimeAdapter:
         parts_by_message = defaultdict(list)
         text_parts_by_message = defaultdict(list)
         if schema == "v2":
-            # V2 has no part table: tool and reasoning evidence is inlined in
-            # each assistant message's content[] array. User prompt text lives
-            # directly in the user message's data.text.
+            # V2 inlines tool and reasoning evidence in each assistant message's
+            # content[] array instead of storing parts, and keeps the typed
+            # request in the user message's own data.text.
             for message_id, msg_type, data_raw in message_rows:
                 data = decode_json(data_raw, None)
                 content = data.get("content") if isinstance(data, dict) else None
@@ -1276,7 +1280,8 @@ class OpenCodeRuntimeAdapter:
         last_assistant_ms = 0
     
         # Message metadata is sufficient for exact executions, calendar-day usage,
-        # model attribution, context, and response timing. Message text remains unread.
+        # model attribution, context, and response timing. Only a user's own
+        # request text is read, and only for the Work insights queue.
         work_turns = []
         work_events = []
         for msg_type, data_raw, row_created in message_rows:
@@ -1290,7 +1295,13 @@ class OpenCodeRuntimeAdapter:
             completed_ms = int_value(time_obj.get("completed"))
             if role == "user":
                 last_user_ms = created_ms
+                # A V1 request is the message's own string content and keeps
+                # precedence. V2 has no `content`; it inlines the request the user
+                # typed in the message row's own `text`, which also survives
+                # migration better than the stale V1 `part` rows.
                 content = data.get("content")
+                if not (isinstance(content, str) and content.strip()):
+                    content = data.get("text")
                 if isinstance(content, str) and content.strip():
                     work_turns.append({
                         "ts": created_ms / 1000.0 if created_ms else 0,
