@@ -2,9 +2,8 @@
 
 Adapters that read a user's own typed request for the Work classifier drop the
 whole request when it carries a credential-shaped token, a host-like value, or
-an account shape; they never partially scrub it. The credential and host
-predicates live here so every adapter shares one copy of the checks that must
-never narrow.
+an account shape; they never partially scrub it. The predicates live here so
+every adapter shares one copy of the checks that must never narrow.
 """
 
 import re

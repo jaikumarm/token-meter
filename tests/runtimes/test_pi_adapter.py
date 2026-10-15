@@ -6,6 +6,7 @@ from unittest import mock
 
 import meter
 from token_meter.contracts import DetailLevel, DiscoveryContext, EvidenceBasis, session_source_public_dict
+from token_meter.domain import redaction
 from token_meter.runtimes import pi as pi_runtime
 from token_meter.runtimes.pi import PiRuntimeAdapter
 
@@ -217,6 +218,117 @@ class PiRuntimeAdapterTests(unittest.TestCase):
             box, _row = self._summarize_with_work(tmp)
         self.assertEqual([turn["text"] for turn in box["turns"]],
                          ["fix the failing chart test"])
+
+    def test_redaction_gate_keeps_prose_that_merely_contains_an_at_sign(self):
+        # Pi's old matcher matched a version or host pattern against the whole
+        # remainder of the string after every "@", so any request whose tail
+        # happened to look like a version was dropped whole. The shared
+        # token-bounded matcher only rejects a host immediately after the "@",
+        # which keeps these ordinary requests and, because the gate never
+        # rewrites, reaches the queue verbatim.
+        kept = (
+            ("scoped_package", "npm install -g @opengsd/gsd-pi@latest"),
+            ("mid_sentence_namespace", "try @cf/meta/llama-3.1-8b instead of the current model"),
+            ("package_version", "bump pkg@1.2.3 in package.json"),
+            ("type_namespace", "add @types/node to the dev dependencies"),
+            ("bare_at_sign", "the @ symbol in the readme needs an escape"),
+        )
+        for label, text in kept:
+            with self.subTest(kind=label), tempfile.TemporaryDirectory() as tmp:
+                self._write_session(tmp, user_text=text)
+                box, _row = self._summarize_with_work(tmp)
+                self.assertEqual([turn["text"] for turn in box["turns"]], [text])
+
+    def test_redaction_gate_keeps_a_benign_request_long_enough_to_compact(self):
+        # The gate runs before the cap and the compaction, so letting a benign
+        # request through must not change how it is compacted: the bounded
+        # 90-character preview is what the classifier receives.
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_session(tmp, user_text="word " * 400 + "@types/node")
+            box, _row = self._summarize_with_work(tmp)
+
+        preview = box["turns"][0]["text"]
+        self.assertEqual(len(preview), 90)
+        self.assertTrue(preview.endswith("…"))
+
+    def test_redaction_gate_still_drops_an_account_address_inside_prose(self):
+        # Bounding the match must not weaken it: a user@host address is still
+        # dropped whole, even mid-sentence, and its text never reaches the
+        # serialized capture. Only obviously fake recipients are used.
+        cases = {
+            "domain": ("email the report to bob@corp.example.com", "bob@corp.example.com"),
+            "dotted_three_label": ("the deploy bot is ci@build01.example.com", "ci@build01.example.com"),
+            "ip_and_port": ("the mirror is ci@10.0.0.5:8080", "ci@10.0.0.5:8080"),
+            "localhost": ("ping ci@localhost and retry", "ci@localhost"),
+        }
+        for label, (text, marker) in cases.items():
+            with self.subTest(kind=label), tempfile.TemporaryDirectory() as tmp:
+                self._write_session(tmp, user_text=text)
+                box, _row = self._summarize_with_work(tmp)
+                self.assertEqual(box["turns"], [])
+                self.assertNotIn(marker, json.dumps(box, default=str))
+
+    def test_redaction_gate_runs_the_shared_credential_and_host_predicates(self):
+        # The credential and host checks are the shared predicates the OpenCode
+        # adapter runs, so key material and host evidence cannot diverge between
+        # the two adapters. Identity, not just name, is what pins that: a local
+        # copy or a re-implementation would break this assertion.
+        self.assertIs(pi_runtime._has_secret_token, redaction.has_secret_token)
+        self.assertIs(pi_runtime._is_host_like, redaction.is_host_like)
+        # The account check is that same shared matcher, not a local one.
+        self.assertIs(pi_runtime.has_account_at, redaction.has_account_at)
+        self.assertFalse(hasattr(pi_runtime, "_has_account_at"))
+
+    def test_redaction_gate_still_drops_a_credential_and_a_host(self):
+        # Unchanged by sharing one account matcher: obviously fake key material
+        # and host evidence are both still dropped whole, and never appear in
+        # the capture.
+        secret = "sk-" + "F" * 32
+        cases = {
+            "credential": "rotate " + secret + " before you push",
+            "host_and_port": "10.0.0.5:11434",
+            "bare_host": "ollama.example.com",
+            "single_label_with_port": "gateway:8080",
+        }
+        for label, text in cases.items():
+            with self.subTest(kind=label), tempfile.TemporaryDirectory() as tmp:
+                self._write_session(tmp, user_text=text)
+                box, _row = self._summarize_with_work(tmp)
+                self.assertEqual(box["turns"], [])
+                self.assertNotIn(text, json.dumps(box, default=str))
+
+    def test_subagent_model_ids_reject_account_shapes_and_keep_model_ids(self):
+        # The same matcher runs here, so a child run must never publish a
+        # host-shaped account address as a model identity, while the version,
+        # tag, and namespace shapes real providers emit must survive. Every
+        # "rejected" case here is dropped by a predicate that is unchanged by
+        # sharing one account matcher.
+        rejected = (
+            "bob@corp.example.com",
+            "ci@build01.example.com",
+            "ci@10.0.0.5:8080",
+            "provider/host.example.com:8443/model",
+        )
+        for value in rejected:
+            with self.subTest(kind="rejected"):
+                self.assertEqual(pi_runtime._subagent_model_id(value), "")
+
+        kept = (
+            "model@latest",
+            "gemini-2.0-flash@001",
+            "llama3.1:8b",
+            "org@1.2.3",
+            "@cf/meta/llama-3.1-8b",
+            # A bare-word suffix is not separable from a tag: "qwen@beta" and a
+            # single-label account such as "user@host" are the same shape, so
+            # the bounded matcher keeps both. That loosens the model-id path
+            # relative to Pi's old version-allowlist matcher, which rejected
+            # both; see test_meter.PiSubagentTests.test_child_model_sanitizer_table.
+            "qwen@beta",
+        )
+        for value in kept:
+            with self.subTest(kind="kept"):
+                self.assertEqual(pi_runtime._subagent_model_id(value), value)
 
     def test_work_extraction_is_gated_on_the_feature_flag(self):
         with tempfile.TemporaryDirectory() as tmp:

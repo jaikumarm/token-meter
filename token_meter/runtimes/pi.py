@@ -30,6 +30,7 @@ from token_meter.contracts import (
     UsageEvidence,
 )
 from token_meter.domain.redaction import (
+    has_account_at,
     has_secret_token as _has_secret_token,
     is_host_like as _is_host_like,
 )
@@ -127,41 +128,16 @@ def _cost_breakdown(value):
     return values if all(item is not None for item in values.values()) else None
 
 
-# Pi keeps its own account matcher so its redaction behaviour is unchanged.
-# It inspects the whole remainder of the string after every "@", which also
-# drops ordinary prose that merely contains an "@"; the shared
-# ``token_meter.domain.redaction.has_account_at`` bounds the check to the
-# address token instead, and is what the OpenCode adapter uses.
-def _has_account_at(text):
-    """Reject user@host shapes while keeping @cf/ and model@version ids."""
-    for position, char in enumerate(text):
-        if char != "@":
-            continue
-        rest = text[position + 1:]
-        if position == 0:
-            # Leading namespace such as Cloudflare's @cf/ or @hf/.
-            if not re.match(r"[a-z0-9-]+/", rest, re.IGNORECASE):
-                return True
-            continue
-        # Vertex-style model@version: the suffix must be an 8-digit date, a
-        # semantic version with at most three numeric components, or a tag.
-        # Four dotted numbers (an IPv4 address) or any host shape is rejected.
-        if not re.fullmatch(
-            r"(?:\d{8}|v?\d+(?:\.\d+){0,2}|latest|default)", rest,
-            re.IGNORECASE,
-        ) or _is_host_like(rest):
-            return True
-    return False
-
-
 def _work_request_text(content, limit=WORK_REQUEST_TEXT_CAP):
     """Return a Pi user turn's typed request for Work insights, or "".
 
     Pi's stored user turns can carry credentials, account data, and host
     shapes, so text bound for the Work classifier passes the same gate Pi
-    applies to every value it surfaces. A request that trips a check is
-    dropped whole; it is never partially scrubbed. The cap above bounds what
-    is read before the adapter compacts it to a short preview.
+    applies to every value it surfaces. All three predicates are the shared
+    ones the OpenCode adapter runs, so the two adapters drop the same
+    requests. A request that trips a check is dropped whole; it is never
+    partially scrubbed. The cap above bounds what is read before the adapter
+    compacts it to a short preview.
     """
     if isinstance(content, str):
         pieces = (content,)
@@ -177,7 +153,7 @@ def _work_request_text(content, limit=WORK_REQUEST_TEXT_CAP):
     text = " ".join(piece for piece in pieces if piece).strip()
     if not text:
         return ""
-    if _has_secret_token(text) or _is_host_like(text) or _has_account_at(text):
+    if _has_secret_token(text) or _is_host_like(text) or has_account_at(text):
         return ""
     return text[:limit]
 
@@ -269,7 +245,7 @@ def _subagent_model_id(value):
         ))
         or _has_secret_token(text)
         or _is_host_like(text)
-        or _has_account_at(text)
+        or has_account_at(text)
     ):
         return ""
     return text

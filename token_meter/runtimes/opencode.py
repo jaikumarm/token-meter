@@ -13,11 +13,9 @@ message's `part` rows and falls back to that message's `text`, which is the
 whole of V2. `part` belongs to V1, and its ids are not a declared relationship
 with V2 messages. Request text bound for the Work classifier is dropped whole,
 never scrubbed, when it carries a credential-shaped token, a host-like value, or
-an account shape, and the gate runs before the cap and the compaction. The
-credential and host predicates are the shared ones Pi uses. The account check is
-`domain.redaction.has_account_at`, which bounds itself to the address token
-after an `@`; Pi keeps a broader matcher that also fires on any `@` followed by
-later prose, so the two adapters do not drop the same requests.
+an account shape, and the gate runs before the cap and the compaction. All three
+predicates are the shared ones Pi runs; the account check bounds itself to the
+address token after an `@`, which keeps `@scope/` ids and version tags.
 """
 
 import contextlib
@@ -224,11 +222,11 @@ def _strip_harness_text(value):
 def _work_request_is_private(text):
     """Return whether a typed request must be dropped whole, never scrubbed.
 
-    The credential and host checks are the shared predicates Pi also runs, so
-    key material and host evidence cannot differ between the two adapters. The
-    account check is the shared token-bounded one, which keeps `@scope/` ids and
-    version tags; Pi's own matcher is broader and still drops those. A request
-    this gate rejects is never queued and never partially rewritten.
+    All three checks are the shared predicates Pi also runs, so key material,
+    host evidence, and account shapes cannot differ between the two adapters.
+    The account check stays bounded to the address token after an `@`, which
+    keeps `@scope/` ids and version tags. A request this gate rejects is never
+    queued and never partially rewritten.
     """
     return (
         has_secret_token(text)

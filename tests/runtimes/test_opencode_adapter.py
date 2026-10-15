@@ -1324,11 +1324,10 @@ class OpenCodeV2AdapterTests(unittest.TestCase):
         )
 
     def test_redaction_gate_keeps_namespaces_and_version_tags(self):
-        # Pi's matcher inspects the whole remainder of the string after every
-        # "@", so ordinary prose that merely contains one is dropped: measured
-        # on a real database it cost 14% of requests. The bounded OpenCode gate
-        # must keep a package namespace, a mid-sentence Cloudflare-style
-        # namespace, and a version tag.
+        # The gate bounds itself to the address token after each "@", so
+        # ordinary prose that merely contains one is kept: a package namespace,
+        # a mid-sentence Cloudflare-style namespace, and a version tag all reach
+        # the queue. Pi runs this same matcher, so both adapters keep them.
         kept = (
             "npm install -g @opengsd/gsd-pi@latest",
             "call the model at @cf/meta/llama-3-8b-instruct",
