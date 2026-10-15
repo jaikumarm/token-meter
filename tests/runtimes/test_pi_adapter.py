@@ -275,12 +275,14 @@ class PiRuntimeAdapterTests(unittest.TestCase):
         # copy or a re-implementation would break this assertion.
         self.assertIs(pi_runtime._has_secret_token, redaction.has_secret_token)
         self.assertIs(pi_runtime._is_host_like, redaction.is_host_like)
-        # The account check is that same shared matcher, not a local one.
+        # The request-text gate's account check is that same shared matcher, not
+        # a local one. The model-id path keeps its own explicitly named rule
+        # (``_model_id_has_account_at``), which is not this request-text gate.
         self.assertIs(pi_runtime.has_account_at, redaction.has_account_at)
         self.assertFalse(hasattr(pi_runtime, "_has_account_at"))
 
     def test_redaction_gate_still_drops_a_credential_and_a_host(self):
-        # Unchanged by sharing one account matcher: obviously fake key material
+        # Unchanged by bounding the account check: obviously fake key material
         # and host evidence are both still dropped whole, and never appear in
         # the capture.
         secret = "sk-" + "F" * 32
@@ -298,11 +300,11 @@ class PiRuntimeAdapterTests(unittest.TestCase):
                 self.assertNotIn(text, json.dumps(box, default=str))
 
     def test_subagent_model_ids_reject_account_shapes_and_keep_model_ids(self):
-        # The same matcher runs here, so a child run must never publish a
-        # host-shaped account address as a model identity, while the version,
-        # tag, and namespace shapes real providers emit must survive. Every
-        # "rejected" case here is dropped by a predicate that is unchanged by
-        # sharing one account matcher.
+        # The model-id path keeps an explicit allowlist of its own, so a child
+        # run must never publish an account address as a model identity, while
+        # the version, tag, and namespace shapes real providers emit must
+        # survive. Credential and host shapes are still dropped by the shared
+        # predicates, which this path runs unchanged.
         rejected = (
             "bob@corp.example.com",
             "ci@build01.example.com",
@@ -319,16 +321,63 @@ class PiRuntimeAdapterTests(unittest.TestCase):
             "llama3.1:8b",
             "org@1.2.3",
             "@cf/meta/llama-3.1-8b",
-            # A bare-word suffix is not separable from a tag: "qwen@beta" and a
-            # single-label account such as "user@host" are the same shape, so
-            # the bounded matcher keeps both. That loosens the model-id path
-            # relative to Pi's old version-allowlist matcher, which rejected
-            # both; see test_meter.PiSubagentTests.test_child_model_sanitizer_table.
-            "qwen@beta",
         )
         for value in kept:
             with self.subTest(kind="kept"):
                 self.assertEqual(pi_runtime._subagent_model_id(value), value)
+
+    def test_subagent_model_id_treats_a_bare_word_after_at_as_an_account(self):
+        # A model id's "@" introduces a version or a tag, never an account, so
+        # a bare word such as "user@host" is rejected. This is the shipped
+        # sanitizer table's privacy invariant: see
+        # test_meter.PiSubagentTests.test_child_model_sanitizer_table.
+        rejected = (
+            "user@host",
+            "user@internal",
+            "alice@mail",
+            "qwen@beta",
+        )
+        for value in rejected:
+            with self.subTest(kind="rejected"):
+                self.assertEqual(pi_runtime._subagent_model_id(value), "")
+
+        kept = (
+            "model@latest",
+            "model@default",
+            "model@v2.1.0",
+            "model@1.2",
+            "model@v1",
+            "claude-opus-4@20250514",
+            "claude-sonnet-4@20250514",
+            "@cf/meta/llama-3.1-8b",
+        )
+        for value in kept:
+            with self.subTest(kind="kept"):
+                self.assertEqual(pi_runtime._subagent_model_id(value), value)
+
+    def test_model_id_and_request_text_paths_apply_different_at_rules(self):
+        # The two paths are deliberately different rules. A bare word after "@"
+        # is an account in a model id ("user@host"), but a benign tag or scope
+        # in prose, so the request-text gate keeps the shapes 0c60fc8 recovered
+        # while the model-id path rejects the same shape. A real account
+        # address is dropped by both.
+        for value in ("user@host", "qwen@beta", "bob@corp.example.com"):
+            with self.subTest(kind="model-id-rejected"):
+                self.assertEqual(pi_runtime._subagent_model_id(value), "")
+
+        for text in (
+            "npm install -g @opengsd/gsd-pi@latest",
+            "try @cf/meta/llama-3.1-8b instead of the current model",
+        ):
+            with self.subTest(kind="text-kept"), tempfile.TemporaryDirectory() as tmp:
+                self._write_session(tmp, user_text=text)
+                box, _row = self._summarize_with_work(tmp)
+                self.assertEqual([turn["text"] for turn in box["turns"]], [text])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_session(tmp, user_text="email the report to bob@corp.example.com")
+            box, _row = self._summarize_with_work(tmp)
+        self.assertEqual(box["turns"], [])
 
     def test_work_extraction_is_gated_on_the_feature_flag(self):
         with tempfile.TemporaryDirectory() as tmp:

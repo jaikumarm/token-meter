@@ -225,6 +225,36 @@ def _model_id_is_path_like(text):
     return False
 
 
+# A model id's "@" introduces a version, a tag, or a leading namespace, never
+# an account: providers emit ``claude-opus-4@20250514``, ``model@v2.1.0``,
+# ``model@latest``, and ``@cf/meta/llama-3.1-8b``. The shared request-text
+# matcher cannot decide this path, because a bare word after "@" is a benign
+# tag or package scope in prose (``npm i -g @scope/pkg@latest``) but an
+# account shape in a model id (``user@host``). So the model-id path keeps an
+# explicit allowlist: after any "@" that is not a leading namespace, only an
+# 8-digit date, a version with at most three numeric components, or the tags
+# ``latest``/``default`` may follow.
+_MODEL_ID_AT_SUFFIX = re.compile(
+    r"(?:\d{8}|v?\d+(?:\.\d+){0,2}|latest|default)", re.IGNORECASE,
+)
+
+
+def _model_id_has_account_at(text):
+    """Reject a model id whose "@" names an account instead of a version."""
+    for position, char in enumerate(text):
+        if char != "@":
+            continue
+        rest = text[position + 1:]
+        if position == 0:
+            # Leading namespace such as Cloudflare's @cf/ or @hf/.
+            if not re.match(r"[a-z0-9-]+/", rest, re.IGNORECASE):
+                return True
+            continue
+        if not _MODEL_ID_AT_SUFFIX.fullmatch(rest) or _is_host_like(rest):
+            return True
+    return False
+
+
 def _subagent_model_id(value):
     if not isinstance(value, str):
         return ""
@@ -245,7 +275,7 @@ def _subagent_model_id(value):
         ))
         or _has_secret_token(text)
         or _is_host_like(text)
-        or has_account_at(text)
+        or _model_id_has_account_at(text)
     ):
         return ""
     return text
