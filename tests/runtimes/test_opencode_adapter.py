@@ -1118,16 +1118,18 @@ class OpenCodeV2AdapterTests(unittest.TestCase):
         self.assertEqual(captured[-1]["text"], "rename the flag to --dry-run")
 
     def test_work_extraction_is_gated_on_the_feature_flag(self):
-        # Gated extraction, pi-style: even a usable request must not be read
-        # while Work insights is disabled, and the read path must never run.
-        sql = (
-            "INSERT INTO session_message VALUES (?,?,?,?,?,?,?)"
-        )
+        # Off means off. Mocking the strip step only proves the block was not
+        # reached; the request is read out of the row before that. Wrapping the
+        # decoded row instead makes the first field access fail, so a build that
+        # reads `content` or `text` and then discards it cannot pass either.
+        created = 7_000
         with contextlib.closing(sqlite3.connect(self.db_path)) as conn, conn:
-            created = 7_000
-            conn.execute(sql, ("gated-1", "ses_root", "user", 7, created, created,
-                               json.dumps({"text": "fix the chart",
-                                           "time": {"created": created}})))
+            conn.execute(
+                "INSERT INTO session_message VALUES (?,?,?,?,?,?,?)",
+                ("gated-1", "ses_root", "user", 7, created, created,
+                 json.dumps({"text": "fix the chart",
+                             "time": {"created": created}})),
+            )
         captured = []
         compat = meter._opencode_compatibility()
         compat["work_insights_enabled"] = lambda: False
@@ -1138,12 +1140,32 @@ class OpenCodeV2AdapterTests(unittest.TestCase):
         compat["attach_work_requests"] = attach
         self.adapter.compatibility = compat
         from token_meter.runtimes import opencode as opencode_module
-        with mock.patch.object(
-                opencode_module,
-                "_strip_harness_text",
-                side_effect=AssertionError("gated extraction ran")):
-            self.adapter.summarize_legacy(self._source("ses_root", legacy=True))
+
+        class _NoRequestRead(dict):
+            """A decoded row that refuses to hand over typed request text."""
+
+            def get(self, key, default=None):
+                if key in ("content", "text"):
+                    raise AssertionError(
+                        "request text was read while Work insights was off"
+                    )
+                return super().get(key, default)
+
+        real_decode = opencode_module.decode_json
+
+        def guarded_decode(value, default=None):
+            decoded = real_decode(value, default)
+            return _NoRequestRead(decoded) if isinstance(decoded, dict) else decoded
+
+        with mock.patch.object(opencode_module, "decode_json",
+                               side_effect=guarded_decode):
+            row = self.adapter.summarize_legacy(
+                self._source("ses_root", legacy=True)
+            )
+
         self.assertEqual(captured, [])
+        # Gating the prompt costs no other evidence: the summary still completes.
+        self.assertEqual(row["turns"], 3)
 
     def test_clean_requests_are_untouched_by_the_harness_strip(self):
         # No injection means no change: a short request passes through exactly,
