@@ -4,7 +4,7 @@ import os
 import re
 import subprocess
 
-from .base import CpuActivity, PlatformPaths, TrashPlan
+from .base import CpuActivity, PlatformCapabilities, PlatformPaths, TrashPlan
 from .common import PosixPlatformServices, expand_home
 
 
@@ -108,6 +108,13 @@ class MacOSPlatformServices(PosixPlatformServices):
             strategy="move",
             destination_root=destination_root,
             destination_label="macOS Trash",
+        )
+
+    def capabilities(self):
+        # Cold-index workers are verified on macOS hosts only; Linux keeps the
+        # sequential path until they are proven under systemd and containers.
+        return PlatformCapabilities(
+            paths=True, detached_process=True, trash=True, parallel_index=True,
         )
 
     def lower_background_priority(self):

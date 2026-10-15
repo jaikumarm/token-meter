@@ -134,8 +134,8 @@ class WindowsBackgroundWorkTests(unittest.TestCase):
 
 
 class ParallelIndexCapabilityTests(unittest.TestCase):
-    def test_only_posix_hosts_enable_parallel_indexing(self):
-        expected = {"darwin": True, "linux": True, "win32": False, "plan9": False}
+    def test_only_verified_hosts_enable_parallel_indexing(self):
+        expected = {"darwin": True, "linux": False, "win32": False, "plan9": False}
         for name, enabled in expected.items():
             with self.subTest(platform=name):
                 platform = platform_services(name, environment={}, home="/home/example")

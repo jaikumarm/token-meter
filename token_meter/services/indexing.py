@@ -2,7 +2,7 @@
 
 Parallel indexing must never make the machine feel slower. Workers run at
 reduced priority (owned by the platform layer), the pool never exceeds half the
-logical CPUs, battery or low-power mode caps it further, and while the build
+CPUs the process may run on, battery or low-power mode caps it further, and while the build
 runs the number of in-flight tasks follows measured idle CPU with additive
 increase and multiplicative decrease: it halves as soon as less than one CPU is
 idle and grows by one only while at least two are idle. Saturation also asks

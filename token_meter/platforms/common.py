@@ -39,9 +39,7 @@ class PosixPlatformServices:
         return ProcessOptions()
 
     def capabilities(self):
-        return PlatformCapabilities(
-            paths=True, detached_process=True, trash=True, parallel_index=True,
-        )
+        return PlatformCapabilities(paths=True, detached_process=True, trash=True)
 
     def update_plan(self, source_root, checkout, status_path):
         script = os.path.join(str(source_root), "scripts", "update")

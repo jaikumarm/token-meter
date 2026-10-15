@@ -15,7 +15,7 @@ from pathlib import Path
 from unittest import mock
 
 import meter
-from token_meter.platforms.base import CpuActivity
+from token_meter.platforms.base import CpuActivity, PlatformCapabilities
 from token_meter.services import indexing
 
 
@@ -118,6 +118,11 @@ class ColdIndexFixture(unittest.TestCase):
             mock.patch.object(meter, "_summary_cache", {}),
             mock.patch.object(meter, "_parallel_index_enabled", True),
             mock.patch.dict(meter._xsess, {"data": None, "at": 0.0}),
+            # The parallel path is exercised on every test host; production
+            # enablement per platform is covered by the capability tests.
+            mock.patch.object(meter._PLATFORM_SERVICES, "capabilities", return_value=PlatformCapabilities(
+                paths=True, detached_process=True, trash=True, parallel_index=True,
+            )),
         ]
         for patch in patches:
             patch.start()
@@ -191,13 +196,33 @@ class PrefetchSessionSummariesTests(ColdIndexFixture):
         self.assertFalse(getattr(meter.runtime_registry().get("opencode"), "worker_summaries", True))
 
     def test_platforms_without_parallel_indexing_stay_sequential(self):
+        expected = self.sequential_rows()
         factory = mock.Mock()
-        windows = meter.platform_services("win32", environment={}, home=r"C:\\Users\\example")
-        with mock.patch.object(meter, "_PLATFORM_SERVICES", windows):
-            self.assertEqual(self.prefetch(executor_factory=factory), 0)
+        for name in ("win32", "linux"):
+            with self.subTest(platform=name):
+                host = meter.platform_services(name, environment={}, home=str(self.home))
+                meter._summary_cache.clear()
+                meter._xsess["data"] = None
+                with mock.patch.object(meter, "_PLATFORM_SERVICES", host), \
+                        mock.patch.object(meter, "_index_executor", factory):
+                    self.assertEqual(self.prefetch(executor_factory=factory), 0)
+                    meter.cross_session(self.sources)
+                self.assertEqual(self.cached_rows(), expected)
         with mock.patch.object(meter, "multiprocessing", mock.Mock(spec=[])):
             self.assertEqual(self.prefetch(executor_factory=factory), 0)
         factory.assert_not_called()
+
+    def test_pool_size_comes_from_usable_cpus_when_not_given(self):
+        sizes = []
+
+        def factory(max_workers, pressure=None):
+            sizes.append(max_workers)
+            return self.thread_executor(max_workers)
+
+        with mock.patch.object(meter, "_usable_cpu_count", return_value=4) as usable:
+            self.prefetch(executor_factory=factory, cpu_count=None)
+        usable.assert_called_once_with()
+        self.assertEqual(sizes, [2])
 
     def test_usable_cpus_respect_affinity_where_available(self):
         with mock.patch.object(os, "sched_getaffinity", create=True, return_value={0, 1, 2}):

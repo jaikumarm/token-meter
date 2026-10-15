@@ -262,9 +262,10 @@ loop then reuses those rows, and anything the pool did not store (too few
 sources, one CPU, a worker error, a broken or unstartable pool) is summarized
 in-process with identical results. Only `main()` enables the pool, so tests,
 MCP, and imports never spawn processes, and only hosts whose
-`PlatformCapabilities.parallel_index` is true use it: macOS and Linux. Windows
-keeps the sequential cold index until worker processes are verified on a
-Windows host; it still gets the matched-pace speedup below. Adapters that declare
+`PlatformCapabilities.parallel_index` is true use it, which today is macOS
+only. Linux and Windows keep the sequential cold index until worker processes
+are verified on those hosts (Linux keeps its tested `/proc/stat` and
+`power_supply` probes for that); both still get the matched-pace speedup below. Adapters that declare
 `worker_summaries = False` (OpenCode, which shares one read-only connection)
 stay in the parent. Workers watch the parent's sentinel and exit as soon as the
 server dies, and they run from the temporary directory so they never pin the
