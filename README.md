@@ -15,6 +15,17 @@ tool activity for **Claude, Codex, Cursor, OpenCode, Kiro, and Pi** in one place
 - **Local only.** Python standard library, no API keys, no telemetry.
 - **Honest numbers.** Estimates are labelled; missing evidence stays unavailable, never zero.
 
+## Things your bill won't tell you
+
+- **6% of tokens were 55% of the dollars.** On Claude Opus 5.5, cache writes cost 25 times as much as cache reads.
+- **83,907 tokens of tool definitions** were loaded into prompts and never called.
+- **Subagent runs fell from $6.04 to $0.96 each** in a month, by giving them short, narrowly scoped tasks.
+- **Cutting xhigh reasoning from 70% to 22% of spend** helped lift output per dollar 73% in three months.
+
+These numbers come from one engineer's laptop, estimated at public list prices. Yours will differ.
+
+[Read: Five levers that move your coding-agent bill](https://splunk.github.io/token-meter/token-optimization.html)
+
 ## Quick Start
 
 ### macOS or Linux
@@ -38,6 +49,11 @@ powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command '$p=Join-Path
 The bootstrap uses WinGet (App Installer) to add any missing Git and Python,
 with no administrator access. From a checkout, run `.\scripts\install-windows.cmd`.
 Add `-BackendOnly` (`& $p -BackendOnly`) to skip the notification-area companion.
+
+The notification-area companion includes a floating usage panel. Drag it to
+move it, or hide it from its context menu; its position and visibility persist
+across installs and updates. Running `run-tray.ps1` directly backgrounds it; `-Inline` is the
+installer-managed launch mode.
 
 Uninstall:
 `powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\Token Meter\runtime\scripts\uninstall-windows.ps1"`
@@ -160,6 +176,17 @@ local `git` only. A mechanical signal, not a productivity score.
 
 Track spend, cost per run, and volume for each named child-agent role, and
 drill into individual runs from **Sessions → Subagents**.
+
+### Goals
+
+Set a target for Spend, Output / $, Cost per 1K pushed lines, Context load,
+Reasoning ratio, Frontier share, or Tokens used from **Efficiency → Goals**.
+Choose an app and one or more models, a period, and a target based on your previous usage.
+Inspect goal charts by hovering or using arrow keys. Delivery contributors show
+repository spend and lines pushed; coverage explains which repositories count.
+Hold your current level, repeat calendar goals, or duplicate a previous goal.
+Progress also shows on Spend, Git, and the menu bar or tray.
+See [goal measurements](specs/GOALS.md).
 
 ### Budgets, settings, and MCP
 
