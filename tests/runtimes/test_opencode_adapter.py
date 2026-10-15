@@ -1117,6 +1117,34 @@ class OpenCodeV2AdapterTests(unittest.TestCase):
         self.assertGreater(len(notices), 90)
         self.assertEqual(captured[-1]["text"], "rename the flag to --dry-run")
 
+    def test_work_extraction_is_gated_on_the_feature_flag(self):
+        # Gated extraction, pi-style: even a usable request must not be read
+        # while Work insights is disabled, and the read path must never run.
+        sql = (
+            "INSERT INTO session_message VALUES (?,?,?,?,?,?,?)"
+        )
+        with contextlib.closing(sqlite3.connect(self.db_path)) as conn, conn:
+            created = 7_000
+            conn.execute(sql, ("gated-1", "ses_root", "user", 7, created, created,
+                               json.dumps({"text": "fix the chart",
+                                           "time": {"created": created}})))
+        captured = []
+        compat = meter._opencode_compatibility()
+        compat["work_insights_enabled"] = lambda: False
+
+        def attach(row, turns, events=(), actions=()):
+            captured.extend(turns)
+            return row
+        compat["attach_work_requests"] = attach
+        self.adapter.compatibility = compat
+        from token_meter.runtimes import opencode as opencode_module
+        with mock.patch.object(
+                opencode_module,
+                "_strip_harness_text",
+                side_effect=AssertionError("gated extraction ran")):
+            self.adapter.summarize_legacy(self._source("ses_root", legacy=True))
+        self.assertEqual(captured, [])
+
     def test_clean_requests_are_untouched_by_the_harness_strip(self):
         # No injection means no change: a short request passes through exactly,
         # and a long one still compacts to the bounded 90-character preview.

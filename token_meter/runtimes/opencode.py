@@ -1340,29 +1340,36 @@ class OpenCodeRuntimeAdapter:
             completed_ms = int_value(time_obj.get("completed"))
             if role == "user":
                 last_user_ms = created_ms
-                # V1 keeps the typed request in the message row's own string
-                # `content`; V2 has no `content` and keeps it in the same row's
-                # own `text`. `part` is V1's text store and is not read here.
-                request_text = data.get("content")
-                if not (isinstance(request_text, str) and request_text.strip()):
-                    request_text = data.get("text")
-                if isinstance(request_text, str) and request_text.strip():
-                    # Strip before the cap and the compaction. The preview keeps
-                    # only the first 90 characters, so a leading injection would
-                    # otherwise be the whole thing the classifier ever sees, and
-                    # capping first could leave the survivor mostly scaffolding.
-                    # Scaffolding on its own is not a request, so a turn is
-                    # emitted only when something of the user's own survives.
-                    request_text = _strip_harness_text(request_text)
-                    if not request_text.strip():
-                        continue
-                    work_turns.append({
-                        "ts": created_ms / 1000.0 if created_ms else 0,
-                        "text": compact_text(
-                            request_text[:WORK_REQUEST_TEXT_CAP], 90,
-                        ),
-                        "model": model,
-                    })
+                # Request text is Work-only: read it only while the feature is
+                # enabled, so an off-path summary never touches the prompt. Pi
+                # applies the same gate at its adapter level.
+                if work_on:
+                    # V1 keeps the typed request in the message row's own
+                    # string `content`; V2 has no `content` and keeps it in the
+                    # same row's own `text`. `part` is V1's text store and is not
+                    # read here.
+                    request_text = data.get("content")
+                    if not (isinstance(request_text, str)
+                            and request_text.strip()):
+                        request_text = data.get("text")
+                    if isinstance(request_text, str) and request_text.strip():
+                        # Strip before the cap and the compaction. The preview
+                        # keeps only the first 90 characters, so a leading
+                        # injection would otherwise be the whole thing the
+                        # classifier ever sees, and capping first could leave the
+                        # survivor mostly scaffolding. Scaffolding on its own is
+                        # not a request, so a turn is emitted only when something
+                        # of the user's own survives.
+                        request_text = _strip_harness_text(request_text)
+                        if request_text.strip():
+                            work_turns.append({
+                                "ts": created_ms / 1000.0 if created_ms
+                                else 0,
+                                "text": compact_text(
+                                    request_text[:WORK_REQUEST_TEXT_CAP], 90,
+                                ),
+                                "model": model,
+                            })
                 continue
             if role != "assistant":
                 continue
