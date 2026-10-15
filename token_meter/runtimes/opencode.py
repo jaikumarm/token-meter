@@ -184,8 +184,14 @@ def _compact_text(value, limit=90):
 # `app/for/[slug] (text/plain)`), so the payload cannot be bounded by the first
 # "]": it runs to the media type, which is the machine-emitted suffix that
 # separates a real notice from a user merely quoting the phrase.
+#
+# That run is non-greedy, so a match ends at the first media-type suffix on its
+# line and covers exactly one notice. A greedy run would instead span from the
+# first notice's "[" all the way to the last suffix on the line, silently
+# removing whatever the user typed between two same-line notices. `[^\n]` still
+# keeps a match on its own line.
 ATTACHMENT_MIGRATION_NOTICE = re.compile(
-    r"\[Attachment unavailable after migration:[^\n]*"
+    r"\[Attachment unavailable after migration:[^\n]*?"
     r"\([a-z]+/[a-z0-9.+_-]+\)\]"
 )
 

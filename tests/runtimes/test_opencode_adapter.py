@@ -1117,6 +1117,112 @@ class OpenCodeV2AdapterTests(unittest.TestCase):
         self.assertGreater(len(notices), 90)
         self.assertEqual(captured[-1]["text"], "rename the flag to --dry-run")
 
+    def test_user_text_between_two_same_line_notices_survives(self):
+        # Two notices can land on the same line. If each match is allowed to run
+        # past the next notice's "[", the words the user typed between them are
+        # deleted along with the injection, which is data loss worse than the
+        # injection this strips. Each notice must be removed on its own.
+        self._add_v2_user_text(
+            21, 21_000,
+            "fix A [Attachment unavailable after migration: a.md (text/plain)] "
+            "then discuss [Attachment unavailable after migration: b.md "
+            "(text/plain)] end",
+        )
+
+        captured, _ = self._captured_turns()
+
+        self.assertEqual(
+            [turn["text"] for turn in captured],
+            ["private prompt", "fix A then discuss end"],
+        )
+
+    def test_user_text_between_three_same_line_notices_survives(self):
+        # The same hazard as the two-notice case, repeated: everything between
+        # the first and last suffix on the line has to survive, not just the
+        # first span.
+        self._add_v2_user_text(
+            22, 22_000,
+            "alpha [Attachment unavailable after migration: a.md (text/plain)] "
+            "beta [Attachment unavailable after migration: b.md (text/plain)] "
+            "gamma [Attachment unavailable after migration: c.md (text/plain)] "
+            "delta",
+        )
+
+        captured, _ = self._captured_turns()
+
+        self.assertEqual(
+            [turn["text"] for turn in captured],
+            ["private prompt", "alpha beta gamma delta"],
+        )
+
+    def test_notices_on_separate_lines_are_each_stripped(self):
+        # The notice is as often on its own line as inline. A match must stay on
+        # one line, so notices on separate lines are removed independently and
+        # the request that follows is left intact.
+        self._add_v2_user_text(
+            23, 23_000,
+            "run the unit suite\n"
+            "[Attachment unavailable after migration: a.md (text/plain)]\n"
+            "[Attachment unavailable after migration: b.md (text/plain)]",
+        )
+
+        captured, _ = self._captured_turns()
+
+        self.assertEqual(
+            [turn["text"] for turn in captured],
+            ["private prompt", "run the unit suite"],
+        )
+
+    def test_payload_path_containing_a_bracket_is_stripped_to_the_media_type(self):
+        # A payload path can itself contain "[". Bounding the removal at the
+        # first "]" would leave the tail of the notice in the request, so the
+        # match has to run to the machine-emitted media-type suffix instead.
+        self._add_v2_user_text(
+            24, 24_000,
+            "see [Attachment unavailable after migration: app/for/[slug] "
+            "(text/plain)] here",
+        )
+
+        captured, _ = self._captured_turns()
+
+        self.assertEqual(
+            [turn["text"] for turn in captured],
+            ["private prompt", "see here"],
+        )
+
+    def test_only_same_line_scaffolding_still_emits_no_turn(self):
+        # Scaffolding alone is not a request even when the notices sit on one
+        # line. Emitting an empty turn would spend a turn's budget on nothing.
+        self._add_v2_user_text(
+            25, 25_000,
+            "[Attachment unavailable after migration: a.md (text/plain)] "
+            "[Attachment unavailable after migration: b.md (text/plain)]",
+        )
+
+        captured, row = self._captured_turns()
+
+        self.assertEqual([turn["text"] for turn in captured], ["private prompt"])
+        self.assertEqual(row["_work_turn_days"], ["day"])
+
+    def test_quoted_notice_phrase_without_a_media_type_is_not_stripped(self):
+        # A user can quote the phrase without the machine-emitted media-type
+        # suffix that a real notice always carries, so the quoted text is the
+        # user's own and must not be removed.
+        self._add_v2_user_text(
+            26, 26_000,
+            "why does my prompt show [Attachment unavailable after migration: "
+            "...] after migration?",
+        )
+
+        captured, _ = self._captured_turns()
+
+        self.assertEqual(
+            [turn["text"] for turn in captured],
+            ["private prompt",
+             "why does my prompt show [Attachment unavailable after migration: "
+             "...] after migration?"],
+        )
+
     def test_work_extraction_is_gated_on_the_feature_flag(self):
         # Off means off. Mocking the strip step only proves the block was not
         # reached; the request is read out of the row before that. Wrapping the
