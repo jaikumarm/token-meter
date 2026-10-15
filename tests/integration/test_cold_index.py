@@ -190,6 +190,22 @@ class PrefetchSessionSummariesTests(ColdIndexFixture):
         self.assertEqual(meter._summary_cache, {})
         self.assertFalse(getattr(meter.runtime_registry().get("opencode"), "worker_summaries", True))
 
+    def test_platforms_without_parallel_indexing_stay_sequential(self):
+        factory = mock.Mock()
+        windows = meter.platform_services("win32", environment={}, home=r"C:\\Users\\example")
+        with mock.patch.object(meter, "_PLATFORM_SERVICES", windows):
+            self.assertEqual(self.prefetch(executor_factory=factory), 0)
+        with mock.patch.object(meter, "multiprocessing", mock.Mock(spec=[])):
+            self.assertEqual(self.prefetch(executor_factory=factory), 0)
+        factory.assert_not_called()
+
+    def test_usable_cpus_respect_affinity_where_available(self):
+        with mock.patch.object(os, "sched_getaffinity", create=True, return_value={0, 1, 2}):
+            self.assertEqual(meter._usable_cpu_count(), 3)
+        with mock.patch.object(os, "sched_getaffinity", create=True, side_effect=OSError), \
+                mock.patch.object(os, "cpu_count", return_value=12):
+            self.assertEqual(meter._usable_cpu_count(), 12)
+
     def test_small_cold_sets_and_single_cpu_hosts_stay_sequential(self):
         factory = mock.Mock()
         self.assertEqual(

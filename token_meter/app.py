@@ -5854,6 +5854,14 @@ def _system_load_average():
         return None
 
 
+def _usable_cpu_count():
+    """CPUs this process may run on (respects Linux cpusets and pinning)."""
+    try:
+        return len(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        return os.cpu_count()
+
+
 def _source_size(source):
     try:
         return os.path.getsize(source.get("path") or "")
@@ -5881,6 +5889,9 @@ def prefetch_session_summaries(sources, executor_factory=None, cpu_count=None,
     """
     if not _parallel_index_enabled:
         return 0
+    if (not _PLATFORM_SERVICES.capabilities().parallel_index
+            or not hasattr(multiprocessing, "parent_process")):
+        return 0
     registry = runtime_registry()
     with _index_prefetch_lock:
         jobs = []
@@ -5902,7 +5913,7 @@ def prefetch_session_summaries(sources, executor_factory=None, cpu_count=None,
             jobs.append((source, signature))
         if len(jobs) < MIN_PARALLEL_SOURCES:
             return 0
-        cpus = os.cpu_count() if cpu_count is None else cpu_count
+        cpus = _usable_cpu_count() if cpu_count is None else cpu_count
         constrained = (
             _PLATFORM_SERVICES.power_constrained()
             if power_constrained is None else power_constrained

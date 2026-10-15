@@ -3,7 +3,6 @@
 import ntpath
 
 from .base import (
-    CpuActivity,
     PlatformCapabilities,
     PlatformPaths,
     ProcessOptions,
@@ -16,7 +15,6 @@ from .base import (
 CREATE_NEW_PROCESS_GROUP = 0x00000200
 DETACHED_PROCESS = 0x00000008
 CREATE_NO_WINDOW = 0x08000000
-BELOW_NORMAL_PRIORITY_CLASS = 0x00004000
 
 
 class WindowsPlatformServices:
@@ -111,78 +109,20 @@ class WindowsPlatformServices:
         return ntpath.join(str(source_root), "scripts", "run-token-meter-mcp.cmd")
 
     def capabilities(self):
-        return PlatformCapabilities(paths=True, detached_process=True, trash=True)
+        # Cold indexing stays sequential until worker processes are verified on
+        # a Windows host (console inheritance, reinstall moves, parent exit).
+        return PlatformCapabilities(
+            paths=True, detached_process=True, trash=True, parallel_index=False,
+        )
 
     def lower_background_priority(self):
-        try:
-            import ctypes
-            from ctypes import wintypes
-            kernel32 = ctypes.windll.kernel32
-            kernel32.GetCurrentProcess.restype = wintypes.HANDLE
-            kernel32.SetPriorityClass.argtypes = (wintypes.HANDLE, wintypes.DWORD)
-            kernel32.SetPriorityClass.restype = wintypes.BOOL
-            return bool(kernel32.SetPriorityClass(
-                kernel32.GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS,
-            ))
-        except (AttributeError, OSError, ImportError, ValueError):
-            return False
+        return False
 
     def set_background_mode(self, yielding):
         return False
 
-    def cpu_activity(self, times_reader=None):
-        try:
-            times = (times_reader or _system_times)()
-            if not times:
-                return None
-            idle, kernel, user = (int(value) for value in times)
-        except (AttributeError, OSError, ImportError, TypeError, ValueError):
-            return None
-        # Kernel time includes idle time on Windows.
-        return CpuActivity(busy=max(0, kernel - idle) + user, idle=idle)
-
-    def power_constrained(self, status_reader=None):
-        try:
-            status = (status_reader or _system_power_status)()
-            if status is None:
-                return None
-            ac_line, saver = (int(value) for value in status)
-        except (AttributeError, OSError, ImportError, TypeError, ValueError):
-            return None
-        if saver == 1 or ac_line == 0:
-            return True
-        if ac_line == 1:
-            return False
+    def cpu_activity(self):
         return None
 
-
-def _system_times():
-    import ctypes
-
-    class FileTime(ctypes.Structure):
-        _fields_ = [("low", ctypes.c_ulong), ("high", ctypes.c_ulong)]
-
-    idle, kernel, user = FileTime(), FileTime(), FileTime()
-    if not ctypes.windll.kernel32.GetSystemTimes(
-            ctypes.byref(idle), ctypes.byref(kernel), ctypes.byref(user)):
+    def power_constrained(self):
         return None
-    return tuple((value.high << 32) | value.low for value in (idle, kernel, user))
-
-
-def _system_power_status():
-    import ctypes
-
-    class SystemPowerStatus(ctypes.Structure):
-        _fields_ = [
-            ("ACLineStatus", ctypes.c_ubyte),
-            ("BatteryFlag", ctypes.c_ubyte),
-            ("BatteryLifePercent", ctypes.c_ubyte),
-            ("SystemStatusFlag", ctypes.c_ubyte),
-            ("BatteryLifeTime", ctypes.c_ulong),
-            ("BatteryFullLifeTime", ctypes.c_ulong),
-        ]
-
-    status = SystemPowerStatus()
-    if not ctypes.windll.kernel32.GetSystemPowerStatus(ctypes.byref(status)):
-        return None
-    return int(status.ACLineStatus), int(status.SystemStatusFlag)

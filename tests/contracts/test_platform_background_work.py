@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from token_meter.platforms import linux, macos, windows
+from token_meter.platforms import linux, macos
 from token_meter.platforms.base import CpuActivity
 from token_meter.platforms.registry import platform_services
 
@@ -124,35 +124,22 @@ class LinuxBackgroundWorkTests(unittest.TestCase):
 
 
 class WindowsBackgroundWorkTests(unittest.TestCase):
-    def setUp(self):
-        self.platform = platform_services("win32", environment={}, home=r"C:\Users\example")
+    def test_windows_keeps_cold_indexing_sequential_and_probes_nothing(self):
+        platform = platform_services("win32", environment={}, home=r"C:\Users\example")
+        self.assertFalse(platform.capabilities().parallel_index)
+        self.assertFalse(platform.lower_background_priority())
+        self.assertFalse(platform.set_background_mode(True))
+        self.assertIsNone(platform.cpu_activity())
+        self.assertIsNone(platform.power_constrained())
 
-    def test_power_status(self):
-        cases = [((0, 0), True), ((1, 1), True), ((1, 0), False), ((255, 0), None)]
-        for status, expected in cases:
-            with self.subTest(status=status):
-                self.assertEqual(
-                    self.platform.power_constrained(status_reader=lambda status=status: status),
-                    expected,
-                )
-        self.assertIsNone(self.platform.power_constrained(status_reader=lambda: None))
-        self.assertIsNone(self.platform.power_constrained(status_reader=lambda: (1,)))
 
-        def broken():
-            raise AttributeError("no windll")
-        self.assertIsNone(self.platform.power_constrained(status_reader=broken))
-
-    def test_system_times_exclude_idle_from_kernel_time(self):
-        activity = self.platform.cpu_activity(times_reader=lambda: (70, 100, 40))
-        self.assertEqual(activity, CpuActivity(busy=70, idle=70))
-        self.assertIsNone(self.platform.cpu_activity(times_reader=lambda: (1, 2)))
-
-    def test_priority_and_mode_are_safe_off_windows(self):
-        if os.name == "nt":
-            self.skipTest("exercises the non-Windows fallback")
-        self.assertFalse(self.platform.lower_background_priority())
-        self.assertFalse(self.platform.set_background_mode(True))
-        self.assertEqual(windows.BELOW_NORMAL_PRIORITY_CLASS, 0x4000)
+class ParallelIndexCapabilityTests(unittest.TestCase):
+    def test_only_posix_hosts_enable_parallel_indexing(self):
+        expected = {"darwin": True, "linux": True, "win32": False, "plan9": False}
+        for name, enabled in expected.items():
+            with self.subTest(platform=name):
+                platform = platform_services(name, environment={}, home="/home/example")
+                self.assertIs(platform.capabilities().parallel_index, enabled)
 
 
 if __name__ == "__main__":

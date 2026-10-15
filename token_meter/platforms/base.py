@@ -67,6 +67,9 @@ class PlatformCapabilities:
     paths: bool
     detached_process: bool
     trash: bool
+    # Cold-index worker processes. Enable only where spawned workers, their
+    # priority, and their exit with the server use standard host mechanisms.
+    parallel_index: bool = False
 
 
 class PlatformServices(Protocol):

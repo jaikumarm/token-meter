@@ -261,7 +261,10 @@ spawn-context process pool before the unchanged sequential loop runs; the
 loop then reuses those rows, and anything the pool did not store (too few
 sources, one CPU, a worker error, a broken or unstartable pool) is summarized
 in-process with identical results. Only `main()` enables the pool, so tests,
-MCP, and imports never spawn processes. Adapters that declare
+MCP, and imports never spawn processes, and only hosts whose
+`PlatformCapabilities.parallel_index` is true use it: macOS and Linux. Windows
+keeps the sequential cold index until worker processes are verified on a
+Windows host; it still gets the matched-pace speedup below. Adapters that declare
 `worker_summaries = False` (OpenCode, which shares one read-only connection)
 stay in the parent. Workers watch the parent's sentinel and exit as soon as the
 server dies, and they run from the temporary directory so they never pin the
@@ -273,14 +276,14 @@ Codex passes its signature-validated trace-head metadata so each worker does
 not reread every rollout to resolve lineage.
 
 The pool must not slow the machine. `token_meter/services/indexing.py` caps it
-at half the logical CPUs (at most six, two on battery or low-power mode) and
+at half the CPUs the process may use (Linux CPU affinity included) (at most six, two on battery or low-power mode) and
 re-derives the in-flight limit every second from measured host idle CPU with
 additive increase and multiplicative decrease: it halves when less than one
 CPU is idle and grows by one only while two are idle. Saturation also raises a
 shared signal that moves workers to the platform's yielding class (macOS
 Utility QoS, where nice alone barely changes placement) until capacity
-returns. Workers otherwise run niced with utility disk I/O on macOS, at
-below-normal priority on Windows, and exit when the build finishes.
+returns. Workers otherwise run niced (with utility disk I/O on macOS) and exit
+when the build finishes.
 `PlatformServices` owns priority, power state, and CPU tick sampling; any
 unavailable signal degrades to the static ceiling rather than an error.
 
