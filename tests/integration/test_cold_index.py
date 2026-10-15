@@ -4,8 +4,12 @@ import copy
 import itertools
 import json
 import os
+import signal
+import subprocess
+import sys
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -41,6 +45,34 @@ def _codex_rows(session_id, turns):
     return rows
 
 
+def _fork_rows():
+    def meta(physical, logical, **extra):
+        return {"timestamp": "2026-08-11T00:00:00Z", "type": "session_meta",
+                "payload": {"id": physical, "session_id": logical, "cwd": "/work/project", **extra}}
+
+    def turn(hour, tool, last, total):
+        stamp = f"2026-08-11T{hour:02d}:00:0"
+        return [
+            {"timestamp": stamp + "1Z", "type": "turn_context",
+             "payload": {"model": "gpt-5.5", "cwd": "/work/project"}},
+            {"timestamp": stamp + "1Z", "type": "event_msg", "payload": {"type": "task_started"}},
+            {"timestamp": stamp + "1.500Z", "type": "response_item",
+             "payload": {"type": "function_call", "name": tool}},
+            {"timestamp": stamp + "2Z", "type": "event_msg", "payload": {"type": "token_count", "info": {
+                "last_token_usage": {"input_tokens": last[0], "output_tokens": last[1]},
+                "total_token_usage": {"input_tokens": total[0], "output_tokens": total[1]}}}},
+            {"timestamp": stamp + "3Z", "type": "event_msg",
+             "payload": {"type": "task_complete", "duration_ms": 2000}},
+        ]
+
+    root = [meta("fork-root", "fork-task")] + turn(0, "inherited", (100, 10), (100, 10))
+    child = ([meta("fork-child", "fork-task", forked_from_id="fork-root"),
+              meta("fork-root", "fork-task")]
+             + turn(1, "inherited", (100, 10), (100, 10))
+             + turn(2, "child_tool", (50, 5), (150, 15)))
+    return root, child
+
+
 class ColdIndexFixture(unittest.TestCase):
     SESSIONS = 20
 
@@ -63,6 +95,12 @@ class ColdIndexFixture(unittest.TestCase):
             ))
             os.utime(trace, (1_784_548_800 + number, 1_784_548_800 + number))
             index_lines.append(json.dumps({"id": session_id, "thread_name": f"Title {number}"}))
+        fork_root, fork_child = _fork_rows()
+        for name, rows, mtime in (("fork-root", fork_root, 10), ("fork-child", fork_child, 20)):
+            trace = day / f"rollout-{name}.jsonl"
+            trace.write_text("".join(json.dumps(row) + "\n" for row in rows))
+            os.utime(trace, (1_784_548_000 + mtime, 1_784_548_000 + mtime))
+        self.fork_child = str(day / "rollout-fork-child.jsonl")
         index = root / ".codex" / "session_index.jsonl"
         index.write_text("\n".join(index_lines) + "\n")
         patches = [
@@ -85,7 +123,7 @@ class ColdIndexFixture(unittest.TestCase):
             patch.start()
             self.addCleanup(patch.stop)
         self.sources = meter.all_session_sources()
-        self.assertEqual(len(self.sources), self.SESSIONS)
+        self.assertEqual(len(self.sources), self.SESSIONS + 2)
 
     def sequential_rows(self):
         meter._summary_cache.clear()
@@ -119,7 +157,7 @@ class PrefetchSessionSummariesTests(ColdIndexFixture):
 
         stored = self.prefetch()
 
-        self.assertEqual(stored, self.SESSIONS)
+        self.assertEqual(stored, len(self.sources))
         self.assertEqual(self.cached_rows(), expected)
         with mock.patch.object(meter, "_index_summary_worker") as worker:
             self.assertEqual(self.prefetch(), 0)
@@ -134,14 +172,23 @@ class PrefetchSessionSummariesTests(ColdIndexFixture):
                 power_constrained=False, prime_s=0,
             )
 
-        self.assertEqual(stored, self.SESSIONS)
+        self.assertEqual(stored, len(self.sources))
         self.assertEqual(self.cached_rows(), expected)
+        # The forked child's inherited prefix is removed inside the worker too.
+        self.assertEqual(self.cached_rows()[self.fork_child]["tokens"], 55)
 
     def test_disabled_outside_the_server_entrypoint(self):
         factory = mock.Mock()
         with mock.patch.object(meter, "_parallel_index_enabled", False):
             self.assertEqual(self.prefetch(executor_factory=factory), 0)
         factory.assert_not_called()
+
+    def test_adapters_that_need_a_shared_connection_stay_in_process(self):
+        adapter = meter.runtime_registry().get("codex")
+        with mock.patch.object(type(adapter), "worker_summaries", False, create=True):
+            self.assertEqual(self.prefetch(), 0)
+        self.assertEqual(meter._summary_cache, {})
+        self.assertFalse(getattr(meter.runtime_registry().get("opencode"), "worker_summaries", True))
 
     def test_small_cold_sets_and_single_cpu_hosts_stay_sequential(self):
         factory = mock.Mock()
@@ -178,7 +225,7 @@ class PrefetchSessionSummariesTests(ColdIndexFixture):
         with mock.patch.object(meter, "_parallel_index_enabled", False):
             cross = meter.cross_session(self.sources)
         self.assertEqual(self.cached_rows(), expected)
-        self.assertEqual(len(cross["sessions"]), self.SESSIONS)
+        self.assertEqual(len(cross["sessions"]), len(self.sources))
 
     def test_worker_errors_are_left_for_the_sequential_path(self):
         expected = self.sequential_rows()
@@ -193,7 +240,7 @@ class PrefetchSessionSummariesTests(ColdIndexFixture):
         with mock.patch.object(meter, "_index_summary_worker", side_effect=worker):
             stored = self.prefetch()
 
-        self.assertEqual(stored, self.SESSIONS - len(failing))
+        self.assertEqual(stored, len(self.sources) - len(failing))
         self.assertTrue(failing.isdisjoint(meter._summary_cache))
         with mock.patch.object(meter, "_parallel_index_enabled", False):
             meter.cross_session(self.sources)
@@ -237,7 +284,7 @@ class PrefetchSessionSummariesTests(ColdIndexFixture):
             thread.join(10)
 
         self.assertEqual(factory_calls, [4])
-        self.assertEqual(len(meter._summary_cache), self.SESSIONS)
+        self.assertEqual(len(meter._summary_cache), len(self.sources))
 
     def test_cross_session_output_is_unchanged_by_parallel_prefetch(self):
         with mock.patch.object(meter, "_parallel_index_enabled", False):
@@ -262,6 +309,55 @@ class PrefetchSessionSummariesTests(ColdIndexFixture):
                 mock.patch.object(meter, "serve_local"):
             meter.main()
             self.assertTrue(meter._parallel_index_enabled)
+
+
+_ORPHAN_PARENT = """
+import os, sys, time
+sys.path.insert(0, sys.argv[1])
+import meter
+if __name__ == "__main__":
+    executor = meter._index_executor(2, None)
+    print(executor.submit(os.getpid).result(), executor.submit(os.getcwd).result(), flush=True)
+    time.sleep(60)
+"""
+
+
+class WorkerLifecycleTests(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt", "POSIX process probing")
+    def test_workers_exit_when_the_server_is_killed_and_do_not_pin_the_runtime_dir(self):
+        root = Path(__file__).resolve().parents[2]
+        with tempfile.TemporaryDirectory() as temp:
+            script = Path(temp) / "parent.py"
+            script.write_text(_ORPHAN_PARENT)
+            parent = subprocess.Popen(
+                [sys.executable, str(script), str(root)], cwd=temp,
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+            )
+            try:
+                worker_pid, worker_cwd = parent.stdout.readline().split(maxsplit=1)
+                worker_pid = int(worker_pid)
+            finally:
+                parent.kill()
+                parent.wait(10)
+                parent.stdout.close()
+            self.assertNotEqual(os.path.realpath(worker_cwd.strip()), os.path.realpath(temp))
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline and _alive(worker_pid):
+                time.sleep(0.1)
+            alive = _alive(worker_pid)
+            if alive:
+                os.kill(worker_pid, signal.SIGKILL)
+            self.assertFalse(alive, "index worker outlived its parent")
+
+
+def _alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 class WorkerPressureTests(unittest.TestCase):

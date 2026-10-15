@@ -116,11 +116,15 @@ class WindowsPlatformServices:
     def lower_background_priority(self):
         try:
             import ctypes
+            from ctypes import wintypes
             kernel32 = ctypes.windll.kernel32
+            kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+            kernel32.SetPriorityClass.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+            kernel32.SetPriorityClass.restype = wintypes.BOOL
             return bool(kernel32.SetPriorityClass(
                 kernel32.GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS,
             ))
-        except (AttributeError, OSError, ImportError):
+        except (AttributeError, OSError, ImportError, ValueError):
             return False
 
     def set_background_mode(self, yielding):
@@ -129,22 +133,22 @@ class WindowsPlatformServices:
     def cpu_activity(self, times_reader=None):
         try:
             times = (times_reader or _system_times)()
-        except (AttributeError, OSError, ImportError, ValueError):
+            if not times:
+                return None
+            idle, kernel, user = (int(value) for value in times)
+        except (AttributeError, OSError, ImportError, TypeError, ValueError):
             return None
-        if not times:
-            return None
-        idle, kernel, user = times
         # Kernel time includes idle time on Windows.
         return CpuActivity(busy=max(0, kernel - idle) + user, idle=idle)
 
     def power_constrained(self, status_reader=None):
         try:
             status = (status_reader or _system_power_status)()
-        except (AttributeError, OSError, ImportError, ValueError):
+            if status is None:
+                return None
+            ac_line, saver = (int(value) for value in status)
+        except (AttributeError, OSError, ImportError, TypeError, ValueError):
             return None
-        if status is None:
-            return None
-        ac_line, saver = status
         if saver == 1 or ac_line == 0:
             return True
         if ac_line == 1:

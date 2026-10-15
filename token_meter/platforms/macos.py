@@ -64,7 +64,7 @@ def parse_pmset_power(battery_output, settings_output):
     low_power = None
     for name, value in _LOW_POWER_LINE.findall(settings_output):
         # ``powermode`` is 0 automatic, 1 low, 2 high; ``lowpowermode`` is 0/1.
-        low_power = value == "1"
+        low_power = bool(low_power) or value == "1"
     if on_battery or low_power:
         return True
     if on_battery is None and low_power is None:
@@ -133,11 +133,11 @@ class MacOSPlatformServices(PosixPlatformServices):
     def cpu_activity(self, reader=None):
         try:
             ticks = (reader or _host_cpu_ticks)()
-        except (AttributeError, OSError, ImportError, ValueError):
+            if not ticks:
+                return None
+            user, system, idle, nice = (int(value) for value in ticks)
+        except (AttributeError, OSError, ImportError, TypeError, ValueError):
             return None
-        if not ticks:
-            return None
-        user, system, idle, nice = ticks
         return CpuActivity(busy=user + system + nice, idle=idle)
 
     def power_constrained(self, run=None):

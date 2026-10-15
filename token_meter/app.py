@@ -28,6 +28,7 @@ import html
 import json
 import math
 import multiprocessing
+import multiprocessing.connection
 import os
 import queue
 import random
@@ -40,6 +41,7 @@ import sqlite3
 import stat
 import subprocess
 import statistics
+import tempfile
 import time
 import threading
 from collections import defaultdict
@@ -5783,7 +5785,30 @@ def _index_worker_runtime_state():
     return state
 
 
+def _exit_with_index_parent():
+    """Exit this worker when the server dies; idle pool workers never see EOF."""
+    parent = multiprocessing.parent_process()
+    if parent is None:
+        return
+    sentinel = parent.sentinel
+
+    def watch():
+        try:
+            multiprocessing.connection.wait([sentinel])
+        except (OSError, ValueError):
+            pass
+        os._exit(0)
+
+    threading.Thread(target=watch, name="index-parent-watch", daemon=True).start()
+
+
 def _index_worker_initializer(pressure_event=None, runtime_state=None):
+    _exit_with_index_parent()
+    # Never pin the runtime directory: Windows reinstalls move it.
+    try:
+        os.chdir(tempfile.gettempdir())
+    except OSError:
+        pass
     _PLATFORM_SERVICES.lower_background_priority()
     _index_worker_pressure["event"] = pressure_event
     _index_worker_pressure["yielding"] = False
@@ -5856,13 +5881,17 @@ def prefetch_session_summaries(sources, executor_factory=None, cpu_count=None,
     """
     if not _parallel_index_enabled:
         return 0
+    registry = runtime_registry()
     with _index_prefetch_lock:
         jobs = []
         seen_paths = set()
         for source in sources or ():
-            # OpenCode summaries reuse the caller's shared read-only connection.
             path = source.get("path")
-            if source.get("provider") == "opencode" or not path or path in seen_paths:
+            if not path or path in seen_paths:
+                continue
+            # Adapters that need the caller's shared connection stay in-process.
+            adapter = registry.get(source.get("provider"))
+            if not getattr(adapter, "worker_summaries", True):
                 continue
             seen_paths.add(path)
             signature = source_revision_signature(source)

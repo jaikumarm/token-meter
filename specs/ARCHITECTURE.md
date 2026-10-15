@@ -261,8 +261,11 @@ spawn-context process pool before the unchanged sequential loop runs; the
 loop then reuses those rows, and anything the pool did not store (too few
 sources, one CPU, a worker error, a broken or unstartable pool) is summarized
 in-process with identical results. Only `main()` enables the pool, so tests,
-MCP, and imports never spawn processes. OpenCode keeps its shared read-only
-connection in the parent. Workers return raw adapter rows; the parent applies
+MCP, and imports never spawn processes. Adapters that declare
+`worker_summaries = False` (OpenCode, which shares one read-only connection)
+stay in the parent. Workers watch the parent's sentinel and exit as soon as the
+server dies, and they run from the temporary directory so they never pin the
+runtime directory a reinstall moves. Workers return raw adapter rows; the parent applies
 configured capabilities and stores them under the pre-dispatch revision
 signature exactly as `session_summary` does. Adapters may hand workers
 content-free warm-start state (`export_worker_state`/`import_worker_state`);

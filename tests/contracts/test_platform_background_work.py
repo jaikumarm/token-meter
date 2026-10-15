@@ -53,6 +53,7 @@ class MacOSBackgroundWorkTests(unittest.TestCase):
             ((MAINS, " lowpowermode 1\n"), True),
             (("", " lowpowermode 0\n"), False),
             ((MAINS, ""), False),
+            ((MAINS, " lowpowermode 1\n powermode 0\n"), True),
             (("", ""), None),
             (("unexpected", "garbage"), None),
         ]
@@ -73,6 +74,8 @@ class MacOSBackgroundWorkTests(unittest.TestCase):
         activity = self.platform.cpu_activity(reader=lambda: (10, 5, 80, 3))
         self.assertEqual(activity, CpuActivity(busy=18, idle=80))
         self.assertIsNone(self.platform.cpu_activity(reader=lambda: None))
+        self.assertIsNone(self.platform.cpu_activity(reader=lambda: (1, 2)))
+        self.assertIsNone(self.platform.cpu_activity(reader=lambda: ("a", 1, 2, 3)))
 
         def broken():
             raise OSError("no mach")
@@ -109,6 +112,11 @@ class LinuxBackgroundWorkTests(unittest.TestCase):
         self.supply("AC", type="Mains", online="1")
         self.assertFalse(self.platform.power_constrained(root=str(self.root)))
 
+    def test_peripheral_batteries_and_idle_usb_ports_do_not_imply_battery(self):
+        self.supply("hidpp_battery_0", type="Battery", scope="Device", status="Discharging")
+        self.supply("ucsi-source-psy-USBC000:001", type="USB", online="0")
+        self.assertIsNone(self.platform.power_constrained(root=str(self.root)))
+
     def test_offline_adapter_means_battery(self):
         self.supply("AC", type="Mains", online="0")
         self.supply("BAT0", type="Battery", status="Not charging")
@@ -128,6 +136,7 @@ class WindowsBackgroundWorkTests(unittest.TestCase):
                     expected,
                 )
         self.assertIsNone(self.platform.power_constrained(status_reader=lambda: None))
+        self.assertIsNone(self.platform.power_constrained(status_reader=lambda: (1,)))
 
         def broken():
             raise AttributeError("no windll")
@@ -136,6 +145,7 @@ class WindowsBackgroundWorkTests(unittest.TestCase):
     def test_system_times_exclude_idle_from_kernel_time(self):
         activity = self.platform.cpu_activity(times_reader=lambda: (70, 100, 40))
         self.assertEqual(activity, CpuActivity(busy=70, idle=70))
+        self.assertIsNone(self.platform.cpu_activity(times_reader=lambda: (1, 2)))
 
     def test_priority_and_mode_are_safe_off_windows(self):
         if os.name == "nt":

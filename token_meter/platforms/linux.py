@@ -96,19 +96,24 @@ class LinuxPlatformServices(PosixPlatformServices):
             names = sorted(os.listdir(root))[:POWER_SUPPLY_MAX_ENTRIES]
         except OSError:
             return None
-        mains_seen = mains_online = battery_discharging = False
+        mains_offline = mains_online = battery_discharging = False
         for name in names:
+            # Peripheral batteries (mice, headsets) report scope "Device".
+            if _read_supply_value(root, name, "scope") == "Device":
+                continue
             kind = _read_supply_value(root, name, "type")
-            if kind in ("Mains", "USB"):
-                mains_seen = True
-                if _read_supply_value(root, name, "online") == "1":
-                    mains_online = True
+            online = _read_supply_value(root, name, "online")
+            if kind in ("Mains", "USB") and online == "1":
+                mains_online = True
+            elif kind == "Mains" and online == "0":
+                mains_offline = True
             elif kind == "Battery":
                 if _read_supply_value(root, name, "status") == "Discharging":
                     battery_discharging = True
         if mains_online:
             return False
-        # An offline mains adapter means the host is running from its battery.
-        if battery_discharging or mains_seen:
+        # An offline mains adapter means the host is running from its battery;
+        # an idle USB-C port alone says nothing about the host's power source.
+        if battery_discharging or mains_offline:
             return True
         return None
