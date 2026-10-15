@@ -1285,6 +1285,93 @@ class OpenCodeV2AdapterTests(unittest.TestCase):
         self.assertEqual(len(captured[-1]["text"]), 90)
         self.assertTrue(captured[-1]["text"].endswith("…"))
 
+    def _assert_request_is_dropped(self, seq, created, text, *, markers=()):
+        """Queue one typed request and prove no part of it came back.
+
+        The baseline session already carries one clean request ("private
+        prompt"), so a dropped request leaves exactly that one turn, and none
+        of the request's own markers may appear in the serialized summary.
+        """
+        self._add_v2_user_text(seq, created, text)
+        captured, row = self._captured_turns()
+        self.assertEqual([turn["text"] for turn in captured], ["private prompt"])
+        encoded = json.dumps({"turns": captured, "row": row}, default=str)
+        for marker in markers:
+            self.assertNotIn(marker, encoded)
+
+    def test_redaction_gate_drops_a_request_carrying_a_credential(self):
+        # The same gate Pi applies to every value it surfaces: a credential
+        # bound for the Work classifier drops the whole request, and the secret
+        # never appears in the serialized summary. The token here is obviously
+        # fake key material, never a real value.
+        secret = "sk-" + "F" * 32
+        self._assert_request_is_dropped(
+            40, 40_000, "rotate " + secret + " before you push",
+            markers=(secret,),
+        )
+
+    def test_redaction_gate_drops_a_host_like_request(self):
+        # A request that is only a host and port is host evidence, so it is
+        # dropped whole rather than handed to the classifier.
+        self._assert_request_is_dropped(41, 41_000, "10.0.0.5:11434")
+
+    def test_redaction_gate_drops_an_account_request(self):
+        # A user@host account shape is rejected even mid-sentence, because the
+        # classifier must never be asked to read an account address.
+        self._assert_request_is_dropped(
+            42, 42_000, "email the report to bob@corp.example.com",
+            markers=("bob@corp.example.com",),
+        )
+
+    def test_redaction_gate_keeps_namespaces_and_version_tags(self):
+        # Pi's matcher inspects the whole remainder of the string after every
+        # "@", so ordinary prose that merely contains one is dropped: measured
+        # on a real database it cost 14% of requests. The bounded OpenCode gate
+        # must keep a package namespace, a mid-sentence Cloudflare-style
+        # namespace, and a version tag.
+        kept = (
+            "npm install -g @opengsd/gsd-pi@latest",
+            "call the model at @cf/meta/llama-3-8b-instruct",
+            "bump pkg@1.2.3 in package.json",
+        )
+        for offset, text in enumerate(kept):
+            self._add_v2_user_text(43 + offset, (43 + offset) * 1_000, text)
+
+        captured, _row = self._captured_turns()
+
+        self.assertEqual(
+            [turn["text"] for turn in captured],
+            ["private prompt"] + list(kept),
+        )
+
+    def test_redaction_gate_is_a_noop_for_clean_requests(self):
+        # The gate only ever drops; it never rewrites what is queued. A clean
+        # short request passes through exactly and a long one still compacts to
+        # the bounded 90-character preview.
+        self._add_v2_user_text(46, 46_000, "ship the release")
+        self._add_v2_user_text(47, 47_000, "word " * 60)
+
+        captured, _row = self._captured_turns()
+
+        self.assertEqual(captured[-2]["text"], "ship the release")
+        self.assertEqual(len(captured[-1]["text"]), 90)
+        self.assertTrue(captured[-1]["text"].endswith("…"))
+
+    def test_redaction_gate_runs_before_the_cap_and_the_compaction(self):
+        # The gate sees the whole typed request rather than the capped slice: a
+        # credential-shaped token past the 8 KiB cap still drops the request.
+        # If the cap ran first, the secret would be cut off and the request
+        # would be queued.
+        head = "alpha "
+        oversized = head * (WORK_REQUEST_TEXT_CAP // len(head))
+        secret = "sk-" + "G" * 32
+        text = oversized + " then rotate " + secret
+        self.assertGreater(len(text), WORK_REQUEST_TEXT_CAP)
+
+        self._assert_request_is_dropped(
+            48, 48_000, text, markers=(secret,),
+        )
+
     def test_v2_summary_succeeds_without_a_part_table(self):
         with contextlib.closing(self.adapter.connection()) as conn:
             tables = {

@@ -321,8 +321,11 @@ Work ([logic reference](WORK_INSIGHTS.md)) is an opt-in view over the same cache
 from `token_meter/services/work_insights.py`. Each adapter passes its
 already-extracted human turns, priced assistant events, and (Claude, Codex)
 tool calls to `attach_work_requests`, which uses `domain/work_evidence.py` to
-give every request its cost slice and a one-line files-changed summary. The
-row keeps only content-free slices; `session_summary` hands the turns (text,
+give every request its cost slice and a one-line files-changed summary. An
+adapter drops a request whole, never partially scrubbing it, when it carries a
+credential-shaped token, a host-like value, or an account shape; the shared
+predicates live in `domain/redaction.py` and run before the cap and compaction.
+The row keeps only content-free slices; `session_summary` hands the turns (text,
 assistant tail, earlier request, evidence line) to the service through a
 thread-local slot; the service keeps unlabeled,
 cleaned, skeleton-compressed text in a bounded in-memory queue (256 items) and
