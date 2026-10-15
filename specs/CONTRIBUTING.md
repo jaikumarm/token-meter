@@ -212,10 +212,13 @@ native tray, update helper, and uninstall logic platform-native. All installers
 must consume `runtime-manifest.txt` and run its parity validator before they
 change services. Portable contracts are necessary, but install, automatic
 startup, endpoint ownership, tray interaction, parity, and uninstall must also
-be proven on the target operating system.
+be proven on the target operating system. The background-work hooks
+(`lower_background_priority`, `set_background_mode`, `power_constrained`,
+`cpu_activity`) are best-effort: return `False` or `None` when the host cannot
+answer, never raise.
 
 ```bash
-python3 -m unittest tests.contracts.test_platform_services tests.contracts.test_runtime_manifest -v
+python3 -m unittest tests.contracts.test_platform_services tests.contracts.test_platform_background_work tests.contracts.test_runtime_manifest -v
 python3 -m unittest tests.contracts.test_windows_packaging -v
 ```
 

@@ -55,6 +55,14 @@ class TrashPlan:
 
 
 @dataclass(frozen=True)
+class CpuActivity:
+    """Cumulative CPU ticks across all cores."""
+
+    busy: int
+    idle: int
+
+
+@dataclass(frozen=True)
 class PlatformCapabilities:
     paths: bool
     detached_process: bool
@@ -85,4 +93,20 @@ class PlatformServices(Protocol):
         ...
 
     def capabilities(self) -> PlatformCapabilities:
+        ...
+
+    def lower_background_priority(self) -> bool:
+        """Best-effort: yield CPU and disk to foreground work in this process."""
+        ...
+
+    def power_constrained(self) -> Optional[bool]:
+        """True on battery or low-power mode, False on mains, None when unknown."""
+        ...
+
+    def set_background_mode(self, yielding: bool) -> bool:
+        """Best-effort: switch this thread between normal and yielding scheduling."""
+        ...
+
+    def cpu_activity(self) -> Optional["CpuActivity"]:
+        """Cumulative host CPU ticks, or None when the host does not expose them."""
         ...

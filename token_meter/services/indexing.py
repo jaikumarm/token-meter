@@ -1,0 +1,177 @@
+"""Load-aware scheduling for cold session indexing.
+
+Parallel indexing must never make the machine feel slower. Workers run at
+reduced priority (owned by the platform layer), the pool never exceeds half the
+logical CPUs, battery or low-power mode caps it further, and while the build
+runs the number of in-flight tasks follows measured idle CPU with additive
+increase and multiplicative decrease: it halves as soon as less than one CPU is
+idle and grows by one only while at least two are idle. Saturation also asks
+workers to switch to the platform's yielding scheduling class until capacity
+returns.
+"""
+
+import concurrent.futures
+import math
+import time
+
+
+MAX_INDEX_WORKERS = 6
+POWER_CONSTRAINED_MAX_WORKERS = 2
+MIN_PARALLEL_SOURCES = 16
+BUDGET_RECHECK_S = 1.0
+PROBE_PRIME_S = 0.5
+RESERVED_IDLE_CPUS = 1.0
+GROW_IDLE_CPUS = 2.0
+
+
+def worker_ceiling(cpu_count, power_constrained=None):
+    """Return the largest pool to start, or 0 when parallel indexing is not worth it."""
+    try:
+        cpus = int(cpu_count or 0)
+    except (TypeError, ValueError):
+        cpus = 0
+    if cpus < 2:
+        return 0
+    ceiling = min(MAX_INDEX_WORKERS, cpus // 2)
+    if power_constrained:
+        ceiling = min(ceiling, POWER_CONSTRAINED_MAX_WORKERS)
+    return max(1, ceiling)
+
+
+def idle_cpus(previous, current, cpu_count):
+    """Return idle CPUs between two samples, or None on a missing, empty, or reset interval."""
+    if previous is None or current is None:
+        return None
+    busy = current.busy - previous.busy
+    idle = current.idle - previous.idle
+    if busy < 0 or idle < 0 or busy + idle <= 0:
+        return None
+    return float(cpu_count or 0) * idle / (busy + idle)
+
+
+def initial_worker_limit(ceiling, idle):
+    """Start with the idle capacity minus the reserved CPU; unknown idle trusts the ceiling."""
+    if ceiling < 1:
+        return 0
+    if idle is None or not math.isfinite(idle):
+        return ceiling
+    return max(1, min(ceiling, int(math.floor(idle - RESERVED_IDLE_CPUS))))
+
+
+def next_worker_limit(limit, ceiling, idle):
+    """Apply one AIMD step: halve when the host is saturated, grow slowly when it is not."""
+    if idle is None or not math.isfinite(idle):
+        return limit
+    if idle < RESERVED_IDLE_CPUS:
+        return max(1, limit // 2)
+    if idle >= GROW_IDLE_CPUS:
+        return min(ceiling, limit + 1)
+    return limit
+
+
+class AdaptiveWorkerBudget:
+    """Callable ``budget(active_workers) -> allowed in-flight tasks``.
+
+    Prefers host CPU tick deltas. Without them it estimates idle CPUs from the
+    1-minute load average minus this build's active workers; with neither it
+    holds the current limit, because workers still run at reduced priority.
+    """
+
+    def __init__(self, ceiling, cpu_count, cpu_sampler, load_average, on_pressure=None):
+        self.ceiling = ceiling
+        self.cpu_count = cpu_count
+        self._cpu_sampler = cpu_sampler
+        self._load_average = load_average
+        self._on_pressure = on_pressure
+        self._previous = self._sample()
+        self.limit = None
+        self.pressured = False
+
+    def _sample(self):
+        try:
+            return self._cpu_sampler()
+        except Exception:
+            return None
+
+    def _idle(self, active_workers):
+        current = self._sample()
+        idle = idle_cpus(self._previous, current, self.cpu_count)
+        if current is not None:
+            self._previous = current
+        if idle is not None:
+            return idle
+        try:
+            load = self._load_average()
+        except Exception:
+            load = None
+        if load is None:
+            return None
+        # The load average already counts this build's running workers.
+        return max(0.0, float(self.cpu_count or 0) - float(load))
+
+    def __call__(self, active_workers=0):
+        idle = self._idle(active_workers)
+        if self.limit is None:
+            self.limit = initial_worker_limit(self.ceiling, idle)
+        else:
+            self.limit = next_worker_limit(self.limit, self.ceiling, idle)
+        if idle is not None and math.isfinite(idle):
+            # Hysteresis: yield on saturation, resume only once capacity returns.
+            if idle < RESERVED_IDLE_CPUS and not self.pressured:
+                self._set_pressure(True)
+            elif idle >= GROW_IDLE_CPUS and self.pressured:
+                self._set_pressure(False)
+        return self.limit
+
+    def _set_pressure(self, pressured):
+        self.pressured = pressured
+        if self._on_pressure is not None:
+            try:
+                self._on_pressure(pressured)
+            except Exception:
+                pass
+
+
+def run_adaptive(items, submit, budget, on_result, clock=time.monotonic,
+                 recheck_s=BUDGET_RECHECK_S):
+    """Run ``submit(item)`` futures with in-flight work bounded by ``budget(active)``.
+
+    ``on_result(item, value)`` receives each completed value. Any submission or
+    executor failure stops new submissions; in-flight work still drains so its
+    results are kept. Returns ``True`` when every item was processed.
+    """
+    pending = iter(items)
+    exhausted = False
+    stopped = False
+    in_flight = {}
+    limit = max(1, int(budget(0) or 1))
+    next_check = clock() + recheck_s
+    while True:
+        while not stopped and not exhausted and len(in_flight) < limit:
+            try:
+                item = next(pending)
+            except StopIteration:
+                exhausted = True
+                break
+            try:
+                in_flight[submit(item)] = item
+            except Exception:
+                stopped = True
+        if not in_flight:
+            break
+        done, _ = concurrent.futures.wait(
+            tuple(in_flight), timeout=recheck_s,
+            return_when=concurrent.futures.FIRST_COMPLETED,
+        )
+        for future in done:
+            item = in_flight.pop(future)
+            try:
+                value = future.result()
+            except Exception:
+                stopped = True
+                continue
+            on_result(item, value)
+        if clock() >= next_check:
+            limit = max(1, int(budget(len(in_flight)) or 1))
+            next_check = clock() + recheck_s
+    return exhausted and not stopped

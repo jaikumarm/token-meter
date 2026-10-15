@@ -1,9 +1,75 @@
 """macOS path and lifecycle policy."""
 
 import os
+import re
+import subprocess
 
-from .base import PlatformPaths, TrashPlan
+from .base import CpuActivity, PlatformPaths, TrashPlan
 from .common import PosixPlatformServices, expand_home
+
+
+# <sys/resource.h>: disk I/O policy for the whole process. UTILITY yields to
+# interactive I/O without the near-stall THROTTLE can cause under contention.
+IOPOL_TYPE_DISK = 0
+IOPOL_SCOPE_PROCESS = 0
+IOPOL_UTILITY = 4
+# <sys/qos.h>. Nice alone barely moves the macOS scheduler; QoS decides core
+# placement. Workers spawned from Terminal would otherwise inherit
+# USER_INTERACTIVE and compete with the user's foreground work.
+QOS_CLASS_DEFAULT = 0x15
+QOS_CLASS_UTILITY = 0x11
+PMSET_TIMEOUT_S = 2.0
+# <mach/host_info.h>: HOST_CPU_LOAD_INFO returns user, system, idle, nice ticks.
+HOST_CPU_LOAD_INFO = 3
+CPU_STATE_COUNT = 4
+_mach_host = {}
+_LOW_POWER_LINE = re.compile(r"^\s*(lowpowermode|powermode)\s+(\d+)\s*$", re.MULTILINE)
+
+
+def _run_pmset(args):
+    completed = subprocess.run(
+        ("/usr/bin/pmset",) + tuple(args), capture_output=True, text=True,
+        timeout=PMSET_TIMEOUT_S, check=False,
+    )
+    return completed.stdout if completed.returncode == 0 else ""
+
+
+def _host_cpu_ticks():
+    import ctypes
+    if "libc" not in _mach_host:
+        libc = ctypes.CDLL("/usr/lib/libSystem.B.dylib")
+        libc.mach_host_self.restype = ctypes.c_uint
+        # One send right per process, reused for every sample.
+        _mach_host["port"] = libc.mach_host_self()
+        _mach_host["libc"] = libc
+    ticks = (ctypes.c_uint * CPU_STATE_COUNT)()
+    count = ctypes.c_uint(CPU_STATE_COUNT)
+    result = _mach_host["libc"].host_statistics(
+        _mach_host["port"], HOST_CPU_LOAD_INFO, ctypes.byref(ticks), ctypes.byref(count),
+    )
+    if result != 0 or count.value < CPU_STATE_COUNT:
+        return None
+    return tuple(int(value) for value in ticks)
+
+
+def parse_pmset_power(battery_output, settings_output):
+    """Interpret ``pmset -g batt`` and ``pmset -g`` text; None when neither is readable."""
+    battery_output = str(battery_output or "")
+    settings_output = str(settings_output or "")
+    on_battery = None
+    if "'Battery Power'" in battery_output:
+        on_battery = True
+    elif "'AC Power'" in battery_output:
+        on_battery = False
+    low_power = None
+    for name, value in _LOW_POWER_LINE.findall(settings_output):
+        # ``powermode`` is 0 automatic, 1 low, 2 high; ``lowpowermode`` is 0/1.
+        low_power = value == "1"
+    if on_battery or low_power:
+        return True
+    if on_battery is None and low_power is None:
+        return None
+    return False
 
 
 class MacOSPlatformServices(PosixPlatformServices):
@@ -43,3 +109,42 @@ class MacOSPlatformServices(PosixPlatformServices):
             destination_root=destination_root,
             destination_label="macOS Trash",
         )
+
+    def lower_background_priority(self):
+        lowered = super().lower_background_priority()
+        try:
+            import ctypes
+            libc = ctypes.CDLL("/usr/lib/libSystem.B.dylib", use_errno=True)
+            libc.setiopolicy_np(IOPOL_TYPE_DISK, IOPOL_SCOPE_PROCESS, IOPOL_UTILITY)
+        except (AttributeError, OSError, ImportError):
+            pass
+        self.set_background_mode(False)
+        return lowered
+
+    def set_background_mode(self, yielding):
+        try:
+            import ctypes
+            libc = ctypes.CDLL("/usr/lib/libSystem.B.dylib")
+            qos = QOS_CLASS_UTILITY if yielding else QOS_CLASS_DEFAULT
+            return libc.pthread_set_qos_class_self_np(qos, 0) == 0
+        except (AttributeError, OSError, ImportError):
+            return False
+
+    def cpu_activity(self, reader=None):
+        try:
+            ticks = (reader or _host_cpu_ticks)()
+        except (AttributeError, OSError, ImportError, ValueError):
+            return None
+        if not ticks:
+            return None
+        user, system, idle, nice = ticks
+        return CpuActivity(busy=user + system + nice, idle=idle)
+
+    def power_constrained(self, run=None):
+        run = run or _run_pmset
+        try:
+            battery = run(("-g", "batt"))
+            settings = run(("-g",))
+        except (OSError, subprocess.SubprocessError, ValueError):
+            return None
+        return parse_pmset_power(battery, settings)

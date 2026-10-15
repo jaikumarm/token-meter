@@ -1,0 +1,421 @@
+import concurrent.futures
+from concurrent.futures.process import BrokenProcessPool
+import copy
+import itertools
+import json
+import os
+import tempfile
+import threading
+import unittest
+from pathlib import Path
+from unittest import mock
+
+import meter
+from token_meter.platforms.base import CpuActivity
+from token_meter.services import indexing
+
+
+def _codex_rows(session_id, turns):
+    rows = [
+        {"timestamp": "2026-08-11T00:00:00Z", "type": "session_meta",
+         "payload": {"id": session_id, "cwd": "/work/project", "model_provider": "openai"}},
+        {"timestamp": "2026-08-11T00:00:01Z", "type": "turn_context",
+         "payload": {"model": "gpt-5.5", "cwd": "/work/project"}},
+    ]
+    for turn in range(turns):
+        second = 2 + turn * 4
+        rows.extend([
+            {"timestamp": f"2026-08-11T00:{second // 60:02d}:{second % 60:02d}Z",
+             "type": "event_msg", "payload": {"type": "task_started"}},
+            {"timestamp": f"2026-08-11T00:{(second + 1) // 60:02d}:{(second + 1) % 60:02d}Z",
+             "type": "response_item",
+             "payload": {"type": "function_call", "name": "read", "call_id": f"c{turn}"}},
+            {"timestamp": f"2026-08-11T00:{(second + 2) // 60:02d}:{(second + 2) % 60:02d}Z",
+             "type": "event_msg", "payload": {"type": "token_count", "info": {
+                 "last_token_usage": {"input_tokens": 1000 + 37 * turn,
+                                      "output_tokens": 50 + turn,
+                                      "cached_input_tokens": 400}}}},
+            {"timestamp": f"2026-08-11T00:{(second + 3) // 60:02d}:{(second + 3) % 60:02d}Z",
+             "type": "event_msg", "payload": {"type": "task_complete", "duration_ms": 3000}},
+        ])
+    return rows
+
+
+class ColdIndexFixture(unittest.TestCase):
+    SESSIONS = 20
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        root = Path(self.temp.name)
+        # Spawned workers re-import the module and do not see in-process
+        # patches; a temporary HOME keeps them inside this fixture.
+        self.home = root
+        sessions = root / ".codex" / "sessions"
+        day = sessions / "2026" / "08" / "11"
+        day.mkdir(parents=True)
+        index_lines = []
+        for number in range(self.SESSIONS):
+            session_id = f"session-{number}"
+            trace = day / f"rollout-{session_id}.jsonl"
+            trace.write_text("".join(
+                json.dumps(row) + "\n" for row in _codex_rows(session_id, 2 + number % 5)
+            ))
+            os.utime(trace, (1_784_548_800 + number, 1_784_548_800 + number))
+            index_lines.append(json.dumps({"id": session_id, "thread_name": f"Title {number}"}))
+        index = root / ".codex" / "session_index.jsonl"
+        index.write_text("\n".join(index_lines) + "\n")
+        patches = [
+            mock.patch.object(meter, "CODEX_SESSIONS", str(sessions)),
+            mock.patch.object(meter, "CODEX_INDEX", str(index)),
+            mock.patch.object(meter, "CLAUDE_PROJECTS", str(root / "no-claude")),
+            mock.patch.object(meter, "CURSOR_PROJECTS", str(root / "no-cursor")),
+            mock.patch.object(meter, "OPENCODE_DB", str(root / "no-opencode.db")),
+            mock.patch.object(meter, "KIRO_SESSIONS", str(root / "no-kiro")),
+            mock.patch.object(meter, "KIRO_AGENT_STORAGE", str(root / "no-kiro-agent")),
+            mock.patch.object(meter, "PI_AGENT_DIR", str(root / "no-pi-agent")),
+            mock.patch.object(meter, "HERMES_STATE_DB", str(root / "no-hermes.db")),
+            mock.patch.object(meter, "CLAUDE_DESKTOP_DATA_ROOTS", []),
+            mock.patch.object(meter, "claude_desktop_index", return_value={}),
+            mock.patch.object(meter, "_summary_cache", {}),
+            mock.patch.object(meter, "_parallel_index_enabled", True),
+            mock.patch.dict(meter._xsess, {"data": None, "at": 0.0}),
+        ]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+        self.sources = meter.all_session_sources()
+        self.assertEqual(len(self.sources), self.SESSIONS)
+
+    def sequential_rows(self):
+        meter._summary_cache.clear()
+        rows = {source["path"]: copy.deepcopy(meter.session_summary(source))
+                for source in self.sources}
+        meter._summary_cache.clear()
+        return rows
+
+    def cached_rows(self):
+        return {path: entry["row"] for path, entry in meter._summary_cache.items()}
+
+
+class PrefetchSessionSummariesTests(ColdIndexFixture):
+    @staticmethod
+    def thread_executor(max_workers, pressure=None):
+        return concurrent.futures.ThreadPoolExecutor(max_workers=max_workers)
+
+    def prefetch(self, **overrides):
+        options = {
+            "executor_factory": self.thread_executor,
+            "cpu_count": 8,
+            "budget": lambda active=0: 4,
+            "power_constrained": False,
+            "prime_s": 0,
+        }
+        options.update(overrides)
+        return meter.prefetch_session_summaries(self.sources, **options)
+
+    def test_parallel_rows_equal_sequential_rows_and_are_reused(self):
+        expected = self.sequential_rows()
+
+        stored = self.prefetch()
+
+        self.assertEqual(stored, self.SESSIONS)
+        self.assertEqual(self.cached_rows(), expected)
+        with mock.patch.object(meter, "_index_summary_worker") as worker:
+            self.assertEqual(self.prefetch(), 0)
+        worker.assert_not_called()
+
+    def test_real_spawned_workers_return_identical_rows(self):
+        expected = self.sequential_rows()
+
+        with mock.patch.dict(os.environ, {"HOME": str(self.home)}):
+            stored = meter.prefetch_session_summaries(
+                self.sources, cpu_count=4, budget=lambda active=0: 2,
+                power_constrained=False, prime_s=0,
+            )
+
+        self.assertEqual(stored, self.SESSIONS)
+        self.assertEqual(self.cached_rows(), expected)
+
+    def test_disabled_outside_the_server_entrypoint(self):
+        factory = mock.Mock()
+        with mock.patch.object(meter, "_parallel_index_enabled", False):
+            self.assertEqual(self.prefetch(executor_factory=factory), 0)
+        factory.assert_not_called()
+
+    def test_small_cold_sets_and_single_cpu_hosts_stay_sequential(self):
+        factory = mock.Mock()
+        self.assertEqual(
+            meter.prefetch_session_summaries(
+                self.sources[:indexing.MIN_PARALLEL_SOURCES - 1],
+                executor_factory=factory, cpu_count=8, budget=lambda active=0: 4,
+                power_constrained=False, prime_s=0,
+            ),
+            0,
+        )
+        self.assertEqual(self.prefetch(executor_factory=factory, cpu_count=1), 0)
+        factory.assert_not_called()
+
+    def test_battery_caps_the_pool_size(self):
+        sizes = []
+
+        def factory(max_workers, pressure=None):
+            sizes.append(max_workers)
+            return self.thread_executor(max_workers)
+
+        self.prefetch(executor_factory=factory, cpu_count=16, power_constrained=True)
+
+        self.assertEqual(sizes, [indexing.POWER_CONSTRAINED_MAX_WORKERS])
+
+    def test_pool_start_failure_falls_back_to_identical_sequential_rows(self):
+        expected = self.sequential_rows()
+
+        def factory(max_workers, pressure=None):
+            raise OSError("process creation blocked")
+
+        self.assertEqual(self.prefetch(executor_factory=factory), 0)
+        self.assertEqual(meter._summary_cache, {})
+        with mock.patch.object(meter, "_parallel_index_enabled", False):
+            cross = meter.cross_session(self.sources)
+        self.assertEqual(self.cached_rows(), expected)
+        self.assertEqual(len(cross["sessions"]), self.SESSIONS)
+
+    def test_worker_errors_are_left_for_the_sequential_path(self):
+        expected = self.sequential_rows()
+        failing = {self.sources[0]["path"], self.sources[1]["path"]}
+        original = meter._index_summary_worker
+
+        def worker(source):
+            if source["path"] in failing:
+                return None
+            return original(source)
+
+        with mock.patch.object(meter, "_index_summary_worker", side_effect=worker):
+            stored = self.prefetch()
+
+        self.assertEqual(stored, self.SESSIONS - len(failing))
+        self.assertTrue(failing.isdisjoint(meter._summary_cache))
+        with mock.patch.object(meter, "_parallel_index_enabled", False):
+            meter.cross_session(self.sources)
+        self.assertEqual(self.cached_rows(), expected)
+
+    def test_broken_pool_stops_dispatch_and_keeps_completed_rows(self):
+        expected = self.sequential_rows()
+        calls = itertools.count()
+        original = meter._index_summary_worker
+
+        def worker(source):
+            if next(calls) == 3:
+                raise BrokenProcessPool("worker killed")
+            return original(source)
+
+        with mock.patch.object(meter, "_index_summary_worker", side_effect=worker):
+            stored = self.prefetch(budget=lambda active=0: 1)
+
+        self.assertEqual(stored, 3)
+        with mock.patch.object(meter, "_parallel_index_enabled", False):
+            meter.cross_session(self.sources)
+        self.assertEqual(self.cached_rows(), expected)
+
+    def test_concurrent_callers_share_one_prefetch(self):
+        factory_calls = []
+        release = threading.Event()
+
+        def factory(max_workers, pressure=None):
+            factory_calls.append(max_workers)
+            release.wait(5)
+            return self.thread_executor(max_workers)
+
+        threads = [
+            threading.Thread(target=self.prefetch, kwargs={"executor_factory": factory})
+            for _ in range(3)
+        ]
+        for thread in threads:
+            thread.start()
+        release.set()
+        for thread in threads:
+            thread.join(10)
+
+        self.assertEqual(factory_calls, [4])
+        self.assertEqual(len(meter._summary_cache), self.SESSIONS)
+
+    def test_cross_session_output_is_unchanged_by_parallel_prefetch(self):
+        with mock.patch.object(meter, "_parallel_index_enabled", False):
+            meter._xsess["data"] = None
+            sequential = copy.deepcopy(meter.cross_session(self.sources))
+        meter._summary_cache.clear()
+        meter._xsess["data"] = None
+        with mock.patch.object(meter, "_index_executor", self.thread_executor), \
+                mock.patch.object(meter._PLATFORM_SERVICES, "power_constrained",
+                                  return_value=False):
+            parallel = meter.cross_session(self.sources)
+        meter._xsess["data"] = None
+        for payload in (sequential, parallel):
+            payload.pop("generated_at", None)
+        self.assertEqual(parallel["sessions"], sequential["sessions"])
+        self.assertEqual(parallel["daily"], sequential["daily"])
+        self.assertEqual(parallel["total_cost"], sequential["total_cost"])
+
+    def test_main_enables_parallel_indexing_for_the_server_only(self):
+        self.addCleanup(setattr, meter, "_matched_pace_persist", False)
+        with mock.patch.object(meter, "_parallel_index_enabled", False), \
+                mock.patch.object(meter, "serve_local"):
+            meter.main()
+            self.assertTrue(meter._parallel_index_enabled)
+
+
+class WorkerPressureTests(unittest.TestCase):
+    def setUp(self):
+        self.addCleanup(meter._index_worker_pressure.update, {"event": None, "yielding": False})
+
+    def test_workers_follow_the_shared_pressure_signal_once_per_change(self):
+        event = threading.Event()
+        with mock.patch.object(meter._PLATFORM_SERVICES, "lower_background_priority"), \
+                mock.patch.object(meter._PLATFORM_SERVICES, "set_background_mode") as mode:
+            meter._index_worker_initializer(event)
+            meter._follow_index_pressure()
+            event.set()
+            meter._follow_index_pressure()
+            meter._follow_index_pressure()
+            event.clear()
+            meter._follow_index_pressure()
+
+        self.assertEqual([call.args for call in mode.call_args_list], [(True,), (False,)])
+
+    def test_worker_returns_none_instead_of_raising(self):
+        adapter = mock.Mock()
+        adapter.summarize_legacy.side_effect = ValueError("corrupt trace")
+        with mock.patch.object(meter, "runtime_registry") as registry:
+            registry.return_value.get.return_value = adapter
+            self.assertIsNone(meter._index_summary_worker({"provider": "codex", "path": "x"}))
+
+
+class WorkerPolicyTests(unittest.TestCase):
+    def test_ceiling_uses_at_most_half_the_cpus_and_respects_power(self):
+        cases = [
+            ((None, False), 0), ((1, False), 0), (("bad", False), 0),
+            ((2, False), 1), ((3, False), 1), ((8, False), 4),
+            ((12, False), 6), ((64, False), indexing.MAX_INDEX_WORKERS),
+            ((12, True), 2), ((2, True), 1), ((12, None), 6),
+        ]
+        for args, expected in cases:
+            with self.subTest(args=args):
+                self.assertEqual(indexing.worker_ceiling(*args), expected)
+
+    def test_idle_cpus_rejects_missing_empty_and_reset_intervals(self):
+        before = CpuActivity(busy=100, idle=100)
+        self.assertAlmostEqual(
+            indexing.idle_cpus(before, CpuActivity(busy=130, idle=170), 10), 7.0,
+        )
+        self.assertIsNone(indexing.idle_cpus(None, before, 10))
+        self.assertIsNone(indexing.idle_cpus(before, None, 10))
+        self.assertIsNone(indexing.idle_cpus(before, before, 10))
+        self.assertIsNone(indexing.idle_cpus(before, CpuActivity(busy=5, idle=500), 10))
+
+    def test_initial_limit_leaves_one_cpu_idle(self):
+        self.assertEqual(indexing.initial_worker_limit(6, None), 6)
+        self.assertEqual(indexing.initial_worker_limit(6, 0.0), 1)
+        self.assertEqual(indexing.initial_worker_limit(6, 3.2), 2)
+        self.assertEqual(indexing.initial_worker_limit(6, 11.0), 6)
+        self.assertEqual(indexing.initial_worker_limit(0, 11.0), 0)
+
+    def test_aimd_halves_under_saturation_and_grows_by_one(self):
+        limit = 6
+        trace = []
+        for idle in (0.2, 0.5, 0.0, 1.5, 2.5, 3.0, None, 9.0, 9.0, 9.0, 9.0):
+            limit = indexing.next_worker_limit(limit, 6, idle)
+            trace.append(limit)
+        self.assertEqual(trace, [3, 1, 1, 1, 2, 3, 3, 4, 5, 6, 6])
+
+
+class AdaptiveWorkerBudgetTests(unittest.TestCase):
+    def samples(self, idle_fractions, cpu_count=10, step=1000):
+        busy = idle = 0
+        values = [CpuActivity(busy=0, idle=0)]
+        for fraction in idle_fractions:
+            idle += int(step * fraction)
+            busy += step - int(step * fraction)
+            values.append(CpuActivity(busy=busy, idle=idle))
+        return iter(values)
+
+    def test_pressure_uses_hysteresis(self):
+        events = []
+        stream = self.samples([0.9, 0.05, 0.15, 0.25, 0.9])
+        budget = indexing.AdaptiveWorkerBudget(
+            6, 10, lambda: next(stream), lambda: None, on_pressure=events.append,
+        )
+
+        limits = [budget(active) for active in (0, 6, 3, 3, 3)]
+
+        # idle CPUs: 9 → 0.5 (saturated) → 1.5 (hold) → 2.5 (resume) → 9
+        self.assertEqual(limits, [6, 3, 3, 4, 5])
+        self.assertEqual(events, [True, False])
+
+    def test_load_average_fallback_when_ticks_are_unavailable(self):
+        budget = indexing.AdaptiveWorkerBudget(6, 8, lambda: None, lambda: 7.5)
+        self.assertEqual(budget(0), 1)
+        budget = indexing.AdaptiveWorkerBudget(6, 8, lambda: None, lambda: 1.0)
+        self.assertEqual(budget(0), 6)
+
+    def test_failing_probes_trust_the_ceiling_then_hold(self):
+        def broken():
+            raise OSError("unavailable")
+
+        budget = indexing.AdaptiveWorkerBudget(4, 8, broken, broken)
+        self.assertEqual([budget(0), budget(4)], [4, 4])
+
+
+class RunAdaptiveTests(unittest.TestCase):
+    def test_in_flight_work_never_exceeds_the_current_budget(self):
+        limits = iter([3, 1, 1, 2, 2, 2] + [2] * 100)
+        state = {"limit": None, "submitted": 0, "delivered": 0, "violations": []}
+
+        def budget(active):
+            state["limit"] = next(limits)
+            return state["limit"]
+
+        def submit(item):
+            in_flight = state["submitted"] - state["delivered"]
+            if in_flight >= state["limit"]:
+                state["violations"].append((item, in_flight, state["limit"]))
+            state["submitted"] += 1
+            return executor.submit(lambda: (threading.Event().wait(0.005), item * 2)[1])
+
+        results = {}
+
+        def on_result(item, value):
+            state["delivered"] += 1
+            results[item] = value
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+            ticks = itertools.count()
+            complete = indexing.run_adaptive(
+                range(20), submit, budget, on_result,
+                clock=lambda: next(ticks), recheck_s=1,
+            )
+
+        self.assertTrue(complete)
+        self.assertEqual(state["violations"], [])
+        self.assertEqual(results, {item: item * 2 for item in range(20)})
+
+    def test_submission_failure_stops_but_drains_in_flight_results(self):
+        submitted = []
+        results = {}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            def submit(item):
+                if item == 2:
+                    raise RuntimeError("cannot schedule new futures")
+                submitted.append(item)
+                return executor.submit(lambda: item)
+
+            complete = indexing.run_adaptive(
+                range(10), submit, lambda active: 2, results.__setitem__,
+            )
+
+        self.assertFalse(complete)
+        self.assertEqual(submitted, [0, 1])
+        self.assertEqual(results, {0: 0, 1: 1})
+
+
+if __name__ == "__main__":
+    unittest.main()
