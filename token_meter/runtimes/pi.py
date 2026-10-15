@@ -131,7 +131,7 @@ def _cost_breakdown(value):
 # It inspects the whole remainder of the string after every "@", which also
 # drops ordinary prose that merely contains an "@"; the shared
 # ``token_meter.domain.redaction.has_account_at`` bounds the check to the
-# address token instead, and is used by newer adapters.
+# address token instead, and is what the OpenCode adapter uses.
 def _has_account_at(text):
     """Reject user@host shapes while keeping @cf/ and model@version ids."""
     for position, char in enumerate(text):

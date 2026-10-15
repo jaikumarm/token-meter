@@ -11,9 +11,13 @@ the message row's own string `content` in V1 and that same row's own `text` in
 V2. The detail path never reads `content` at all: it prefers a V1 user
 message's `part` rows and falls back to that message's `text`, which is the
 whole of V2. `part` belongs to V1, and its ids are not a declared relationship
-with V2 messages. Request text bound for the Work classifier passes the same
-redaction gate Pi applies, so a credential, host, or account shape drops the
-whole request before it is capped or compacted.
+with V2 messages. Request text bound for the Work classifier is dropped whole,
+never scrubbed, when it carries a credential-shaped token, a host-like value, or
+an account shape, and the gate runs before the cap and the compaction. The
+credential and host predicates are the shared ones Pi uses. The account check is
+`domain.redaction.has_account_at`, which bounds itself to the address token
+after an `@`; Pi keeps a broader matcher that also fires on any `@` followed by
+later prose, so the two adapters do not drop the same requests.
 """
 
 import contextlib
@@ -220,10 +224,11 @@ def _strip_harness_text(value):
 def _work_request_is_private(text):
     """Return whether a typed request must be dropped whole, never scrubbed.
 
-    Text bound for the Work classifier is dropped, not partially redacted,
-    when it carries a credential-shaped token, a host-like value, or an
-    account shape. Pi applies the same gate at its adapter level. The gate
-    can only drop a request; it never alters the one that is queued.
+    The credential and host checks are the shared predicates Pi also runs, so
+    key material and host evidence cannot differ between the two adapters. The
+    account check is the shared token-bounded one, which keeps `@scope/` ids and
+    version tags; Pi's own matcher is broader and still drops those. A request
+    this gate rejects is never queued and never partially rewritten.
     """
     return (
         has_secret_token(text)
@@ -1370,7 +1375,7 @@ class OpenCodeRuntimeAdapter:
                 last_user_ms = created_ms
                 # Request text is Work-only: read it only while the feature is
                 # enabled, so an off-path summary never touches the prompt. Pi
-                # applies the same gate at its adapter level.
+                # gates the same way at its adapter level.
                 if work_on:
                     # V1 keeps the typed request in the message row's own
                     # string `content`; V2 has no `content` and keeps it in the
@@ -1382,18 +1387,14 @@ class OpenCodeRuntimeAdapter:
                         request_text = data.get("text")
                     if (isinstance(request_text, str) and request_text.strip()
                             and not _work_request_is_private(request_text)):
-                        # The redaction gate runs before the cap and the
-                        # compaction: a request carrying a credential, a host, or
-                        # an account shape is dropped whole, never partially
-                        # scrubbed, so no part of it reaches the classifier.
-                        #
-                        # Strip before the cap and the compaction. The preview
-                        # keeps only the first 90 characters, so a leading
-                        # injection would otherwise be the whole thing the
-                        # classifier ever sees, and capping first could leave the
-                        # survivor mostly scaffolding. Scaffolding on its own is
-                        # not a request, so a turn is emitted only when something
-                        # of the user's own survives.
+                        # The gate above already ran, so this is the user's own
+                        # text. Strip before the cap and the compaction: the
+                        # preview keeps only the first 90 characters, so a
+                        # leading injection would otherwise be the whole thing
+                        # the classifier ever sees, and capping first could
+                        # leave the survivor mostly scaffolding. Scaffolding on
+                        # its own is not a request, so a turn is emitted only
+                        # when something of the user's own survives.
                         request_text = _strip_harness_text(request_text)
                         if request_text.strip():
                             work_turns.append({
