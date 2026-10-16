@@ -236,6 +236,10 @@ from token_meter.runtimes.hermes import (
     HermesRuntimeAdapter,
     HermesRuntimeAdapterProxy,
 )
+from token_meter.runtimes.antigravity import (
+    AntigravityRuntimeAdapter,
+    AntigravityRuntimeAdapterProxy,
+)
 from token_meter.runtimes.path_cache import BoundedPathCache
 from token_meter.runtimes.registry import RuntimeRegistry
 from token_meter.mcp.service import MCPQueryService
@@ -268,6 +272,7 @@ CLAUDE_SETTINGS = os.path.expanduser("~/.claude/settings.json")
 CLAUDE_ROOT_CONFIG = os.path.expanduser("~/.claude.json")
 CODEX_SESSIONS = os.path.expanduser("~/.codex/sessions")
 CODEX_INDEX = os.path.expanduser("~/.codex/session_index.jsonl")
+ANTIGRAVITY_DATA_DIR = os.path.expanduser("~/.gemini/antigravity-cli")
 CODEX_CONFIG = os.path.expanduser("~/.codex/config.toml")
 CODEX_AUTH = os.path.expanduser("~/.codex/auth.json")
 CLAUDE_CREDENTIALS = os.path.expanduser("~/.claude/.credentials.json")
@@ -341,7 +346,7 @@ SESSION_CLAUDE_MODEL_ID_RE = re.compile(
     re.IGNORECASE,
 )
 HERMES_MODEL_IDENTITY_LABEL = "Bedrock application profile"
-BUDGET_PROVIDERS = ("claude", "codex", "cursor", "opencode", "kiro", "pi", "hermes")
+BUDGET_PROVIDERS = ("claude", "codex", "cursor", "opencode", "kiro", "pi", "hermes", "antigravity")
 DEFAULT_RUNTIME_BUDGET = 0.0
 DEFAULT_BUDGET_THRESHOLDS = (80, 90, 100)
 DEFAULT_SESSION_BUDGET = 10.0
@@ -3097,6 +3102,25 @@ def recompute_hermes(source):
     return _hermes_native_adapter().recompute_legacy(source)
 
 
+_antigravity_native_adapters = {}
+
+
+def _antigravity_native_adapter():
+    path = os.path.abspath(os.path.expanduser(ANTIGRAVITY_DATA_DIR))
+    adapter = _antigravity_native_adapters.get(path)
+    if adapter is None:
+        adapter = AntigravityRuntimeAdapter(path, compatibility={
+            "summary_row": summary_row, "build_state": build_state,
+            "metric_availability": metric_availability, "analysis_block": analysis_block,
+            "tool_summary": tool_summary, "add_model_summary": add_model_summary,
+            "add_model_daily": add_model_daily,
+        }, path_cache=_recursive_path_cache)
+        _antigravity_native_adapters[path] = adapter
+        if len(_antigravity_native_adapters) > 8:
+            _antigravity_native_adapters.pop(next(iter(_antigravity_native_adapters)))
+    return adapter
+
+
 def opencode_db_path():
     path = os.path.expanduser(OPENCODE_DB)
     return path if os.path.isabs(path) else os.path.join(OPENCODE_DATA_ROOT, path)
@@ -5037,6 +5061,7 @@ def runtime_registry():
                 KiroRuntimeAdapterProxy(lambda: _kiro_native_adapter()),
                 PiRuntimeAdapterProxy(lambda: _pi_native_adapter()),
                 HermesRuntimeAdapterProxy(lambda: _hermes_native_adapter()),
+                AntigravityRuntimeAdapterProxy(lambda: _antigravity_native_adapter()),
             ))
     return _RUNTIME_REGISTRY
 
@@ -8449,6 +8474,8 @@ def _source_inventory_roots():
         KIRO_AGENT_STORAGE,
         PI_AGENT_DIR,
         os.path.join(PI_AGENT_DIR, "sessions"),
+        os.path.join(ANTIGRAVITY_DATA_DIR, "brain"),
+        str(_antigravity_native_adapter().metadata_dir),
     )
 
 
@@ -8552,6 +8579,7 @@ def runtime_candidate_paths():
     paths.update(claude.desktop_metadata_paths())
     paths.update(_codex_native_adapter()._paths())
     paths.update(_cursor_native_adapter()._transcript_paths())
+    paths.update(_antigravity_native_adapter()._paths())
     kiro = _kiro_native_adapter()
     paths.update(kiro._glob(str(kiro.sessions_root / "*" / "*" / "messages.jsonl")))
     paths.update(kiro._glob(str(kiro.sessions_root / "cli" / "*.jsonl")))

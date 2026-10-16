@@ -469,6 +469,44 @@ total is not assigned to a calendar day. `HERMES_STATE_DB` takes precedence;
 otherwise Token Meter uses `HERMES_HOME/state.db`, then the default Hermes
 state location. Hermes support reads SQLite aggregate evidence, not JSONL.
 
+### Antigravity CLI sessions
+
+Token Meter reads completed model-response metadata from
+`~/.gemini/antigravity-cli/brain/*/.system_generated/logs/transcript.jsonl`.
+It ignores the duplicate full transcript, prompts, response text, reasoning text,
+and tool payloads. Antigravity storage is read-only; deleting sessions through
+Token Meter is disabled. Input, output and cache-read counts are recorded per
+completed step and summed once. Missing counters remain unavailable. The totals
+cover exported model-response steps; hidden/background work may not be exported.
+Dollar costs, cache-write counts, a separate thinking-token total, context
+pressure and execution speed remain unavailable.
+
+Existing transcripts do not record model identity, so historical usage appears
+under `unknown-model`. To record model attribution for future invocations, add
+this named hook to `~/.gemini/config/hooks.json`, preserving any existing hooks:
+
+```json
+{
+  "token-meter-antigravity-model": {
+    "PostInvocation": [{
+      "type": "command",
+      "command": "/absolute/path/to/token-meter/scripts/record-antigravity-model",
+      "timeout": 5
+    }]
+  }
+}
+```
+
+Use the script in your installed Token Meter runtime so the path remains stable.
+Restart Antigravity to load the hook. The hook records only a validated public
+model identifier and completed invocation step range in
+`~/.token-meter/antigravity/`. It returns an empty hook response and does not
+change agent instructions, permissions or execution. Model switches apply only
+to observed invocation ranges; earlier history and uncaptured steps remain
+unknown. If the transcript has not been exported when the hook fires, model
+attribution remains unavailable. Remove this named hook to stop collecting model
+metadata; existing recorded metadata remains usable.
+
 ### Pi coding-agent sessions
 
 Pi discovery reads only Pi-owned JSONL session files. Its default root is
