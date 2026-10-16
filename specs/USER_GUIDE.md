@@ -99,6 +99,52 @@ python3 meter.py
 Open [http://127.0.0.1:8722](http://127.0.0.1:8722), start a normal agent run,
 and select it from **Sessions**.
 
+
+### LAN access
+
+By default, the dashboard listens only on `127.0.0.1:8722`.
+Set `TOKEN_METER_HOST=0.0.0.0` in the **server process environment** to listen
+on all IPv4 interfaces, including localhost. For a foreground run:
+
+```bash
+TOKEN_METER_HOST=0.0.0.0 python3 meter.py
+```
+
+Open `http://<server-LAN-IP>:8722/` from another device. `0.0.0.0` is a bind
+address, not a browser destination. A specific local IPv4 address is also
+accepted; binding only that address disables localhost access and can break
+the installer health checks and native companion, so installed users should
+use `0.0.0.0` for LAN access. Hostnames and IPv6 binds are not supported.
+
+For an installed Linux server, run `systemctl --user edit token-meter-server.service`
+and add this override:
+
+```ini
+[Service]
+Environment=TOKEN_METER_HOST=0.0.0.0
+```
+
+Then run:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user restart token-meter-server.service
+```
+
+Exporting a variable in your terminal does not configure an already running
+service. On macOS or Windows, configure the environment of the LaunchAgent or
+server launcher, respectively, and restart that server. To restore local-only
+access, remove the override or set `TOKEN_METER_HOST=127.0.0.1`, then restart.
+
+LAN mode has **no login or encryption**. Any device that can reach the port can
+read dashboard data and use its actions; action tokens prevent cross-origin
+requests, not access by other network users. `0.0.0.0` includes Wi-Fi, Ethernet,
+and VPN interfaces. Restrict access with your host firewall to trusted devices;
+do not forward port 8722 to the internet. HTTPS, authentication, and reverse
+proxy/domain-name deployments are outside this mode. Browser actions support
+localhost and the server's directly connected IP address; alternate hostname
+origins are rejected.
+
 ## Daily Workflows
 
 ### Welcome and Learn
