@@ -71,9 +71,11 @@ troubleshooting are in the [User guide](specs/USER_GUIDE.md).
 | Windows | Beta | Notification area |
 
 Runtimes: Claude Code and Desktop (Agent/Cowork), Codex CLI and desktop, Cursor
-Agent/Composer, OpenCode (current `session_v2` and legacy storage), Kiro, and
-Pi. Only sessions stored locally are visible, and agent databases are opened
-read-only.
+Agent/Composer, OpenCode (current `session_v2` and legacy storage), Kiro, Pi,
+Hermes Agent, and Antigravity CLI. Only sessions stored locally are visible, and
+agent databases are opened read-only. Antigravity imports recorded token usage;
+historical model names and dollar costs may be unavailable. See the
+[Antigravity setup](specs/USER_GUIDE.md#antigravity-cli-sessions) for future model attribution.
 
 ## A glance now, a deep dive later
 

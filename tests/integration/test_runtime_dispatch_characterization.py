@@ -10,7 +10,7 @@ class LegacyRuntimeDispatchCharacterizationTests(unittest.TestCase):
     def test_runtime_registry_has_the_current_runtimes_in_discovery_order(self):
         self.assertEqual(
             meter.runtime_registry().runtime_ids,
-            ("claude", "codex", "cursor", "opencode", "kiro", "pi", "hermes"),
+            ("claude", "codex", "cursor", "opencode", "kiro", "pi", "hermes", "antigravity"),
         )
         self.assertNotIsInstance(meter.runtime_registry().get("claude"), LegacyRuntimeAdapter)
         self.assertNotIsInstance(meter.runtime_registry().get("codex"), LegacyRuntimeAdapter)
@@ -19,6 +19,7 @@ class LegacyRuntimeDispatchCharacterizationTests(unittest.TestCase):
         self.assertNotIsInstance(meter.runtime_registry().get("kiro"), LegacyRuntimeAdapter)
         self.assertNotIsInstance(meter.runtime_registry().get("pi"), LegacyRuntimeAdapter)
         self.assertNotIsInstance(meter.runtime_registry().get("hermes"), LegacyRuntimeAdapter)
+        self.assertNotIsInstance(meter.runtime_registry().get("antigravity"), LegacyRuntimeAdapter)
 
     def test_claude_routes_through_the_native_adapter(self):
         source = {"provider": "claude", "id": "claude-session"}
@@ -118,7 +119,7 @@ class LegacyRuntimeDispatchCharacterizationTests(unittest.TestCase):
     def test_discovery_routes_each_runtime_once_in_registry_order(self):
         rows = {
             runtime_id: {"provider": runtime_id, "id": runtime_id + "-session"}
-            for runtime_id in ("claude", "codex", "cursor", "opencode", "kiro", "pi", "hermes")
+            for runtime_id in ("claude", "codex", "cursor", "opencode", "kiro", "pi", "hermes", "antigravity")
         }
         opencode_adapter = mock.Mock()
         opencode_adapter.discover_legacy.return_value = (rows["opencode"],)
@@ -134,6 +135,8 @@ class LegacyRuntimeDispatchCharacterizationTests(unittest.TestCase):
         pi_adapter.discover_legacy.return_value = (rows["pi"],)
         hermes_adapter = mock.Mock()
         hermes_adapter.discover_legacy.return_value = (rows["hermes"],)
+        antigravity_adapter = mock.Mock()
+        antigravity_adapter.discover_legacy.return_value = (rows["antigravity"],)
         with mock.patch.object(
             meter, "_claude_native_adapter", return_value=claude_adapter
         ), mock.patch.object(
@@ -152,12 +155,14 @@ class LegacyRuntimeDispatchCharacterizationTests(unittest.TestCase):
             meter, "_pi_native_adapter", return_value=pi_adapter
         ), mock.patch.object(
             meter, "_hermes_native_adapter", return_value=hermes_adapter
+        ), mock.patch.object(
+            meter, "_antigravity_native_adapter", return_value=antigravity_adapter
         ):
             discovered = meter.all_session_sources()
 
         self.assertEqual(discovered, [
             rows["claude"], rows["codex"], rows["cursor"], rows["opencode"], rows["kiro"],
-            rows["pi"], rows["hermes"],
+            rows["pi"], rows["hermes"], rows["antigravity"],
         ])
         claude_adapter.discover_legacy.assert_called_once()
         codex_adapter.discover_legacy.assert_called_once()
@@ -166,6 +171,7 @@ class LegacyRuntimeDispatchCharacterizationTests(unittest.TestCase):
         kiro_adapter.discover_legacy.assert_called_once()
         pi_adapter.discover_legacy.assert_called_once()
         hermes_adapter.discover_legacy.assert_called_once()
+        antigravity_adapter.discover_legacy.assert_called_once()
 
     def test_one_discovery_failure_returns_other_runtimes_and_bounded_status(self):
         codex_source = {"provider": "codex", "id": "codex-session"}
@@ -183,6 +189,8 @@ class LegacyRuntimeDispatchCharacterizationTests(unittest.TestCase):
         pi_adapter.discover_legacy.return_value = ()
         hermes_adapter = mock.Mock()
         hermes_adapter.discover_legacy.return_value = ()
+        antigravity_adapter = mock.Mock()
+        antigravity_adapter.discover_legacy.return_value = ()
         with mock.patch.object(
             meter, "_claude_native_adapter", return_value=claude_adapter
         ), mock.patch.object(
@@ -197,6 +205,8 @@ class LegacyRuntimeDispatchCharacterizationTests(unittest.TestCase):
             meter, "_pi_native_adapter", return_value=pi_adapter
         ), mock.patch.object(
             meter, "_hermes_native_adapter", return_value=hermes_adapter
+        ), mock.patch.object(
+            meter, "_antigravity_native_adapter", return_value=antigravity_adapter
         ):
             discovered = meter.all_session_sources()
 
