@@ -13320,7 +13320,10 @@ class H(BaseHTTPRequestHandler):
             self.send_error(404)
             return
         origin = self.headers.get("Origin") or ""
-        if origin and (urlparse(origin).hostname or "") not in ("localhost", "127.0.0.1", "::1"):
+        if (origin
+                and (urlparse(origin).hostname or "") not in ("localhost", "127.0.0.1", "::1")
+                # The accepted socket has the actual destination IP even with a wildcard bind.
+                and origin != "http://{}:{}".format(*self.connection.getsockname()[:2])):
             self._send(json.dumps({"ok": False, "error": "Local dashboard origin required."}),
                        "application/json", status=403)
             return
@@ -13816,6 +13819,7 @@ def main():
         handler_class=H,
         server_class=TokenMeterHTTPServer,
         port=PORT,
+        host=os.environ.get("TOKEN_METER_HOST", "127.0.0.1"),
         background=(watcher, software_update_watcher, git_delivery_watcher, work_insights_watcher),
     )
 

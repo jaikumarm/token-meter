@@ -62,6 +62,8 @@ Go to [http://127.0.0.1:8722](http://127.0.0.1:8722), start an agent run, and
 pick it under **Sessions**. Requirements, updates, uninstall, and
 troubleshooting are in the [User guide](specs/USER_GUIDE.md).
 
+For optional trusted LAN access, see the [LAN setup](specs/USER_GUIDE.md#lan-access).
+
 ## Platforms
 
 | Platform | Status | Companion |
@@ -233,8 +235,8 @@ returns allowlisted structure and numbers, not raw trace content. See the
 
 ## Privacy
 
-- The dashboard binds to `127.0.0.1`. Do not expose it publicly.
-- Traces, prompts, responses, paths, and analytics never leave your machine.
+- The dashboard binds to `127.0.0.1` by default. Optional LAN access exposes the dashboard and actions without authentication or TLS; do not expose it publicly.
+- Token Meter does not upload traces, prompts, responses, paths, or analytics. With LAN access enabled, reachable devices can read dashboard data.
 - The MCP returns derived numbers only. Agents you connect may send them to their model provider.
 - Costs are estimates. Codex uses public API rates, which can differ from subscription billing.
 - Work insights, when on, send typed prompts, the end of the reply before each one, and

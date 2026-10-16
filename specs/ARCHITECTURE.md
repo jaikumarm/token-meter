@@ -32,7 +32,9 @@ flowchart LR
   app --> mcp_queries --> mcp
 ```
 
-The server binds to `127.0.0.1:8722`. `meter.py` is intentionally only an
+The server binds to `127.0.0.1:8722` by default. `TOKEN_METER_HOST` accepts an
+IPv4 literal; `0.0.0.0` opts into all IPv4 interfaces. See the
+[LAN trust boundary](USER_GUIDE.md#lan-access). `meter.py` is intentionally only an
 executable and import-compatibility facade; current composition lives in
 `token_meter/app.py`.
 
