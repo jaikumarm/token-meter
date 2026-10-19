@@ -132,8 +132,8 @@ def _model_alias_candidates(model_id, provider_id=None):
             alias = native_id[len(prefix):]
             if alias and alias not in candidates:
                 candidates.append(alias)
-    if provider == "cursor":
-        # Cursor appends reasoning effort to model ids; effort does not change rates.
+    if provider in ("cursor", "google"):
+        # Cursor and Antigravity append reasoning effort to model ids; effort does not change rates.
         for candidate in tuple(candidates):
             stripped = CURSOR_EFFORT_SUFFIX_RE.sub("", candidate)
             if stripped and stripped not in candidates:

@@ -1,6 +1,7 @@
 """Read-only Antigravity CLI usage; conversation content never leaves the parser."""
 
 import json
+import math
 import os
 import re
 import tempfile
@@ -107,7 +108,7 @@ def record_model(payload, metadata_dir=None, app_data_dir=None):
 
 class AntigravityRuntimeAdapter:
     descriptor = RuntimeDescriptor(
-        'antigravity', 'Antigravity CLI', frozenset(('sessions', 'models')),
+        'antigravity', 'Gemini', frozenset(('sessions', 'models')),
         'runtime.generic', 'runtime-neutral', None,
     )
 
@@ -174,7 +175,7 @@ class AntigravityRuntimeAdapter:
         return {'provider': 'antigravity', 'client': 'antigravity',
                 'label': self.descriptor.label, 'runtime': self.descriptor.label,
                 'id': path.parents[2].name, 'session': path.parents[2].name,
-                'path': str(path), 'project': '', 'title': 'Antigravity session',
+                'path': str(path), 'project': '', 'title': 'Gemini session',
                 'metadata_path': str(self.metadata_dir / path.parents[2].name),
                 'model': model, 'model_provider': _model_ref(model).provider_id,
                 'mtime': path.stat().st_mtime,
@@ -213,7 +214,7 @@ class AntigravityRuntimeAdapter:
     def _parsed(self, path):
         path = Path(path)
         if not self._owned(path) or not path.is_file():
-            raise ValueError('Antigravity session is unavailable')
+            raise ValueError('Gemini session is unavailable')
         warnings = set()
         steps = {}
         boundaries = self._boundaries(path.parents[2].name)
@@ -262,7 +263,7 @@ class AntigravityRuntimeAdapter:
                         'model': model, **{key: _integer(row.get(key)) for key in
                         ('input_tokens', 'output_tokens', 'cache_read_tokens')}}
         except OSError:
-            raise ValueError('Antigravity session is unavailable') from None
+            raise ValueError('Gemini session is unavailable') from None
         if not steps:
             warnings.add('usage_unavailable')
         if any(row['model'] == UNKNOWN_MODEL for row in steps.values()):
@@ -283,52 +284,80 @@ class AntigravityRuntimeAdapter:
             raise ValueError('Source belongs to another runtime')
         rows, warnings = self._parsed(source.locator.value)
         incomplete = any(code != 'model_unavailable' for code in warnings)
+        costs = [self._cost(row) for row in rows]
+        cost = (EvidenceValue(sum(costs), EvidenceBasis.ESTIMATED)
+                if rows and not incomplete and None not in costs else EvidenceValue.unavailable())
         return NormalizedSession(
             source=source, started_at=_date(min((r['timestamp'] for r in rows), default=0)),
             ended_at=_date(max((r['timestamp'] for r in rows), default=0)),
             usage=UsageEvidence(self._evidence(rows, 'input_tokens', incomplete),
                 self._evidence(rows, 'output_tokens', incomplete),
                 self._evidence(rows, 'cache_read_tokens', incomplete),
-                EvidenceValue.unavailable(), EvidenceValue.unavailable()),
+                EvidenceValue.unavailable(), cost),
             timing=TimingEvidence.unavailable(), tools=(),
             turns=tuple(TurnSummary(r['index'], _date(r['timestamp']), _date(r['timestamp']),
                 self._evidence((r,), 'output_tokens')) for r in rows),
             pricing_basis=None, capabilities=self.descriptor.capabilities,
-            warnings=tuple(ParseWarning(code, 'Antigravity evidence is partial or unavailable.') for code in warnings),
+            warnings=tuple(ParseWarning(code, 'Gemini evidence is partial or unavailable.') for code in warnings),
             detail=detail)
+
+    def _cost(self, row):
+        """Gemini API list-price estimate for one attributed step; None when unavailable."""
+        price_for, cost_of = (self.compatibility.get(key) for key in ('price_for', 'cost_of'))
+        tokens = [row[key] for key in ('input_tokens', 'output_tokens', 'cache_read_tokens')]
+        if (not callable(price_for) or not callable(cost_of) or None in tokens
+                or _model_ref(row['model']).provider_id != 'google'):
+            return None
+        at = row['timestamp'] or None
+        if price_for(row['model'], 'antigravity', at=at)[1]:
+            return None
+        # Exported input excludes cache reads, so the two buckets are priced separately.
+        total = sum(cost_of({'input_tokens': tokens[0], 'output_tokens': tokens[1],
+            'cache_read_input_tokens': tokens[2], 'cache_creation_input_tokens': 0},
+            row['model'], 'antigravity', at=at).values())
+        return total if math.isfinite(total) and total >= 0 else None
 
     def _availability(self, rows, incomplete=False):
         complete = lambda field: not incomplete and bool(rows) and all(r[field] is not None for r in rows)
         input_available = complete('input_tokens') and complete('cache_read_tokens')
         return self.compatibility['metric_availability']('antigravity',
-            cost=False, tokens=input_available and complete('output_tokens'),
+            cost=not incomplete and bool(rows) and all(self._cost(r) is not None for r in rows),
+            tokens=input_available and complete('output_tokens'),
             input_tokens=input_available, output_tokens=complete('output_tokens'),
             cache=False, timing=False, throughput=False, context=False, tool_results=False)
 
     def _summary(self, source, rows, incomplete=False):
         compat = self.compatibility
-        stats, daily = {}, {}
+        stats, daily, model_cost, day_cost = {}, {}, {}, {}
         for row in rows:
+            cost = self._cost(row)
             usage = {'input_tokens': row['input_tokens'] or 0,
                 'output_tokens': row['output_tokens'] or 0,
                 'cache_read_input_tokens': row['cache_read_tokens'] or 0,
                 'input_available': not incomplete and row['input_tokens'] is not None
                     and row['cache_read_tokens'] is not None,
                 'output_available': not incomplete and row['output_tokens'] is not None}
-            compat['add_model_summary'](stats, row['model'], usage, 0, cost_available=False)
-            compat['add_model_daily'](daily, row['model'], usage, 0, row['timestamp'], cost_available=False)
-        for values in (*stats.values(), *daily.values()):
-            relevant = [r for r in rows if r['model'] == values.get('model')] if 'model' in values else rows
-            values['availability'] = self._availability(relevant, incomplete)
+            compat['add_model_summary'](stats, row['model'], usage, cost or 0.0,
+                cost_available=cost is not None)
+            compat['add_model_daily'](daily, row['model'], usage, cost or 0.0, row['timestamp'],
+                cost_available=cost is not None)
+            if cost is not None:
+                model_cost[row['model']] = model_cost.get(row['model'], 0.0) + cost
+                day = time.strftime('%Y-%m-%d', time.localtime(row['timestamp']))
+                day_cost[day] = day_cost.get(day, 0.0) + cost
+        for model, values in (*stats.items(), *((v['model'], v) for v in daily.values())):
+            values['availability'] = self._availability(
+                [r for r in rows if r['model'] == model], incomplete)
         model_tokens = {model: values['tokens'] for model, values in stats.items()}
         timestamps = [r['timestamp'] for r in rows if r['timestamp']]
-        return compat['summary_row'](source, 'Antigravity session', 0.0,
+        availability = self._availability(rows, incomplete)
+        return compat['summary_row'](source, 'Gemini session', sum(model_cost.values()),
             sum(model_tokens.values()), len(rows), set(stats), min(timestamps, default=0),
-            max(timestamps, default=0), {}, model_tokens, {}, False,
+            max(timestamps, default=0), model_cost, model_tokens, day_cost,
+            bool(model_cost) and not availability['cost'],
             input_tokens=sum(v['input_tokens'] for v in stats.values()),
             output_tokens=sum(v['output_tokens'] for v in stats.values()),
-            model_stats=stats, model_daily=list(daily.values()),
-            availability=self._availability(rows, incomplete))
+            model_stats=stats, model_daily=list(daily.values()), availability=availability)
 
     def summarize_legacy(self, source, unused=None):
         del unused
@@ -346,11 +375,22 @@ class AntigravityRuntimeAdapter:
             'cache_read': sum(r['cache_read_tokens'] or 0 for r in rows), 'cache_write': 0}
         summary = self._summary(source, rows, incomplete)
         series, executions = [], []
+        cost_totals = dict.fromkeys(totals, 0.0)
         for index, row in enumerate(rows, 1):
+            step_cost = self._cost(row) or 0.0
+            breakdown = dict.fromkeys(totals, 0.0)
+            if step_cost:
+                breakdown.update(compat['cost_of']({'input_tokens': row['input_tokens'],
+                    'output_tokens': row['output_tokens'],
+                    'cache_read_input_tokens': row['cache_read_tokens'],
+                    'cache_creation_input_tokens': 0}, row['model'], 'antigravity',
+                    at=row['timestamp'] or None))
+                for key in cost_totals:
+                    cost_totals[key] += breakdown.get(key, 0.0)
             input_tokens, output, cache = (row[key] or 0 for key in
                 ('input_tokens', 'output_tokens', 'cache_read_tokens'))
             available = self._availability((row,))
-            series.append({'i': index, 'in': input_tokens, 'out': output, 'cost': 0.0,
+            series.append({'i': index, 'in': input_tokens, 'out': output, 'cost': step_cost,
                 'fresh_input': input_tokens, 'cache': cache, 'cache_read': cache,
                 'cache_write': 0, 'think': False, 'tools': 0, 'side': False,
                 'reasoning': 0, 'reasoning_ms': 0, 'context_pct': None,
@@ -360,30 +400,33 @@ class AntigravityRuntimeAdapter:
                 'model': row['model'], 'tokens': {'input': input_tokens, 'output': output,
                     'fresh_input': input_tokens, 'cache': cache, 'cache_read': cache,
                     'cache_write': 0, 'reasoning': 0, 'retrieval': 0, 'total': input_tokens + output + cache},
-                'cost': 0.0, 'cost_breakdown': dict.fromkeys(totals, 0.0),
+                'cost': step_cost, 'cost_breakdown': {key: breakdown.get(key, 0.0) for key in totals},
                 'tools': [], 'tool_count': 0, 'model_calls': 1, 'reasoning_tokens': 0,
                 'reasoning_duration_ms': 0, 'duration_ms': None, 'wait_duration_ms': None,
                 'context_tokens': 0, 'context_window': 0, 'context_pct': None,
-                'summary': 'Antigravity model invocation', 'user_message': '', 'user_input': '',
+                'summary': 'Gemini model invocation', 'user_message': '', 'user_input': '',
                 'availability': available})
-        analyses = compat['analysis_block'](totals, 0.0, 0, 0, 0.0,
-            summary['_model_tok'], dict.fromkeys(summary['_model_tok'], 0.0),
+        total_cost = summary['cost']
+        analyses = compat['analysis_block'](totals, total_cost, 0, 0, 0.0,
+            summary['_model_tok'], {model: summary['_model_cost'].get(model, 0.0)
+                for model in summary['_model_tok']},
             compat['tool_summary'](executions), 0.0, 0, len(rows))
         timestamps = [r['timestamp'] for r in rows if r['timestamp']]
         state = compat['build_state']({**source, 'cache_savings_available': False},
-            totals, dict.fromkeys(totals, 0.0), sum(totals.values()), 0.0, series, executions, [],
+            totals, cost_totals, sum(totals.values()), total_cost, series, executions, [],
             {'reasoning': 0, 'output': totals['output'], 'retrieval': 0, 'coordination': 0},
             analyses, [], min(timestamps, default=0), max(timestamps, default=0), 0, None, 0,
-            False, rows[-1]['model'] if rows else UNKNOWN_MODEL,
-            'Recorded Antigravity tokens; model names require invocation-hook evidence. '
-            'Dollar cost, reasoning-token split, timing and cache-write counts are unavailable.',
+            summary['cost_approx'], rows[-1]['model'] if rows else UNKNOWN_MODEL,
+            'Recorded Gemini tokens; model names require invocation-hook evidence. '
+            'Cost is a Gemini API Standard-tier list-price estimate for hook-attributed steps '
+            'only; reasoning-token split, timing and cache-write counts are unavailable.',
             availability=self._availability(rows, incomplete))
         state['evidence_warnings'] = list(warnings)
         return state
 
     def deletion_plan(self, source):
         del source
-        return DeletionPlan.deny('Antigravity session storage is read-only.')
+        return DeletionPlan.deny('Gemini session storage is read-only.')
 
 
 class AntigravityRuntimeAdapterProxy:

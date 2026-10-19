@@ -72,10 +72,11 @@ troubleshooting are in the [User guide](specs/USER_GUIDE.md).
 
 Runtimes: Claude Code and Desktop (Agent/Cowork), Codex CLI and desktop, Cursor
 Agent/Composer, OpenCode (current `session_v2` and legacy storage), Kiro, Pi,
-Hermes Agent, and Antigravity CLI. Only sessions stored locally are visible, and
-agent databases are opened read-only. Antigravity imports recorded token usage;
-historical model names and dollar costs may be unavailable. See the
-[Antigravity setup](specs/USER_GUIDE.md#antigravity-cli-sessions) for future model attribution.
+Hermes Agent, and Antigravity CLI (shown as Gemini). Only sessions stored locally
+are visible, and agent databases are opened read-only. Gemini imports recorded
+token usage and estimates cost at Gemini API list prices once a model is
+recorded; historical model names, and so their costs, may be unavailable. See the
+[Gemini setup](specs/USER_GUIDE.md#gemini-antigravity-cli-sessions) for model attribution.
 
 ## A glance now, a deep dive later
 
