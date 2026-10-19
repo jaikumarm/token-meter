@@ -13,5 +13,5 @@ try:
         raise ValueError('Hook payload exceeds limit')
     record_model(json.loads(raw))
 except (ValueError, TypeError, OSError, UnicodeError, RecursionError):
-    print('Token Meter: Antigravity model metadata could not be recorded.', file=sys.stderr)
+    print('Token Meter: Gemini model metadata could not be recorded.', file=sys.stderr)
 print('{}')

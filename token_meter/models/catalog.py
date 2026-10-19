@@ -4,7 +4,7 @@ import re
 
 
 MODEL_PRICE_FIELDS = ("input", "output", "cache_write", "cache_read")
-MODEL_PROVIDER_IDS = ("anthropic", "openai", "cursor", "opencode")
+MODEL_PROVIDER_IDS = ("anthropic", "openai", "cursor", "opencode", "google")
 LEGACY_PROVIDER_TO_MODEL_PROVIDER = {
     "claude": "anthropic",
     "codex": "openai",
@@ -32,6 +32,11 @@ BUILTIN_PRICE_SOURCES = (
         "provider": "cursor",
         "label": "Cursor Models & Pricing",
         "url": "https://cursor.com/docs/models-and-pricing",
+    },
+    {
+        "provider": "google",
+        "label": "Gemini API pricing",
+        "url": "https://ai.google.dev/gemini-api/docs/pricing",
     },
 )
 
@@ -189,12 +194,19 @@ CURSOR_PRICE = {
         "input": 4.0, "output": 20.0, "cache_write": 5.0, "cache_read": 0.40,
     },
 }
+# Standard paid tier; Argon has implicit caching only, so no cache-write charge.
+GOOGLE_PRICE = {
+    "gemini-4-argon": {
+        "input": 2.0, "output": 10.0, "cache_write": 0.0, "cache_read": 0.10,
+    },
+}
 CURSOR_VARIANT_MODEL_IDS = ("composer-2.5", "grok-4.7", "grok-4.6", "grok-4.5")
 CURSOR_UNPRICED_VARIANTS = frozenset(("fast", "max"))
 CURSOR_EFFORT_SUFFIX_RE = re.compile(r"-(?:none|minimal|low|medium|high|xhigh)$")
 
 GPT_56_PRICE_UPDATE_AT = 1_785_456_000  # 2026-07-31T00:00:00Z
 GPT_56_SOL_PRICE_UPDATE_AT = 1_787_270_400  # 2026-08-21T00:00:00Z
+GEMINI_4_ARGON_PRICE_UPDATE_AT = 1_796_083_200  # 2026-12-01T00:00:00Z
 GPT_56_LONG_CONTEXT_TOKENS = 272_000
 CLAUDE_HAIKU_55_LONG_CONTEXT_TOKENS = 100_000
 CLAUDE_HAIKU_55_LONG_CONTEXT_MULTIPLIER = 5.0
@@ -226,6 +238,14 @@ BUILTIN_MODEL_PRICE_HISTORY = {
             (GPT_56_SOL_PRICE_UPDATE_AT, CURSOR_PRICE["gpt-5.6-sol"]),
         ),
     },
+    "google": {
+        "gemini-4-argon": (
+            (None, GOOGLE_PRICE["gemini-4-argon"]),
+            (GEMINI_4_ARGON_PRICE_UPDATE_AT, {
+                "input": 4.0, "output": 20.0, "cache_write": 0.0, "cache_read": 0.20,
+            }),
+        ),
+    },
 }
 
 BUILTIN_PRICE_TABLES = {
@@ -233,6 +253,7 @@ BUILTIN_PRICE_TABLES = {
     "openai": OPENAI_PRICE,
     "cursor": CURSOR_PRICE,
     "opencode": {},
+    "google": GOOGLE_PRICE,
 }
 DEFAULT_MODELS = {
     "anthropic": "claude-opus-4-8",

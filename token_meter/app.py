@@ -3113,7 +3113,7 @@ def _antigravity_native_adapter():
             "summary_row": summary_row, "build_state": build_state,
             "metric_availability": metric_availability, "analysis_block": analysis_block,
             "tool_summary": tool_summary, "add_model_summary": add_model_summary,
-            "add_model_daily": add_model_daily,
+            "add_model_daily": add_model_daily, "price_for": price_for, "cost_of": cost_of,
         }, path_cache=_recursive_path_cache)
         _antigravity_native_adapters[path] = adapter
         if len(_antigravity_native_adapters) > 8:
@@ -3675,6 +3675,9 @@ def _resolved_price_quote(model, provider="claude", variant=None, at=None):
     if provider == "cursor":
         quote = price_quote(_price_query_from_compat("cursor", model, variant, at))
         return quote, True
+    if provider == "antigravity":
+        quote = price_quote(_price_query_from_compat("google", model, variant, at))
+        return quote, not quote.available
     if provider not in ("claude", "codex", "opencode"):
         return _compat_price_quote(
             str(provider or "unknown-provider"), str(model or "unknown-model"),

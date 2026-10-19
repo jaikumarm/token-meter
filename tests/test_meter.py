@@ -4293,7 +4293,7 @@ class PricingTests(unittest.TestCase):
         self.assertEqual(pricing["reviewed_on"], "2026-09-30")
         self.assertEqual(
             [source["provider"] for source in pricing["sources"]],
-            ["anthropic", "openai", "cursor"],
+            ["anthropic", "openai", "cursor", "google"],
         )
         self.assertEqual(
             [source["url"] for source in pricing["sources"]],
@@ -4301,6 +4301,7 @@ class PricingTests(unittest.TestCase):
                 "https://platform.claude.com/docs/en/about-claude/pricing",
                 "https://developers.openai.com/api/docs/models/compare",
                 "https://cursor.com/docs/models-and-pricing",
+                "https://ai.google.dev/gemini-api/docs/pricing",
             ],
         )
 

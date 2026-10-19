@@ -37,7 +37,8 @@ class AntigravityAdapterTests(unittest.TestCase):
         self.adapter = AntigravityRuntimeAdapter(self.root, metadata_dir=self.metadata,
             compatibility={name: getattr(meter, name) for name in (
                 'summary_row', 'build_state', 'metric_availability', 'analysis_block',
-                'tool_summary', 'add_model_summary', 'add_model_daily')})
+                'tool_summary', 'add_model_summary', 'add_model_daily',
+                'price_for', 'cost_of')})
         self.context = DiscoveryContext(home=self.tmp.name)
 
     def write(self, *rows):
@@ -112,6 +113,30 @@ class AntigravityAdapterTests(unittest.TestCase):
         state = self.adapter.load(source, DetailLevel.FULL)
         self.assertEqual(state['total_tokens'], 960)
         self.assertNotIn('PRIVATE', json.dumps((summary, state)))
+
+    def test_gemini_steps_get_list_price_estimates_and_unknown_history_stays_unpriced(self):
+        # 100 input @ $2, 20 output @ $10, 200 cache reads @ $0.10 per 1M tokens.
+        step_cost = (100 * 2.0 + 20 * 10.0 + 200 * 0.10) / 1_000_000
+        self.write(step(1), step(3))
+        self.capture(3, 'gemini-4-argon-high')
+        source = self.adapter.discover_legacy(self.context)[0]
+        summary = self.adapter.summarize_legacy(source)
+        models = {row['model']: row for row in summary['model_stats']}
+        self.assertAlmostEqual(models['gemini-4-argon-high']['cost'], step_cost)
+        self.assertTrue(models['gemini-4-argon-high']['availability']['cost'])
+        self.assertFalse(models['unknown-model']['availability']['cost'])
+        self.assertFalse(summary['availability']['cost'])
+        self.assertTrue(summary['cost_approx'])
+        self.assertIsNone(self.adapter.load(self.source(), DetailLevel.SUMMARY).usage.cost_usd.value)
+
+        self.write(step(1, created_at='2026-12-01T00:00:01Z'))
+        self.capture(1, 'gemini-4-argon-high')
+        loaded = self.adapter.load(self.source(), DetailLevel.SUMMARY)
+        self.assertAlmostEqual(loaded.usage.cost_usd.value, step_cost * 2)
+        self.assertEqual(loaded.usage.cost_usd.basis, EvidenceBasis.ESTIMATED)
+        state = self.adapter.load(self.adapter.discover_legacy(self.context)[0], DetailLevel.FULL)
+        self.assertAlmostEqual(state['total_cost'], step_cost * 2)
+        self.assertAlmostEqual(state['executions'][0]['cost'], step_cost * 2)
 
     def test_revision_changes_with_usage_and_model_boundary(self):
         self.write(step())

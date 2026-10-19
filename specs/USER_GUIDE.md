@@ -469,7 +469,10 @@ total is not assigned to a calendar day. `HERMES_STATE_DB` takes precedence;
 otherwise Token Meter uses `HERMES_HOME/state.db`, then the default Hermes
 state location. Hermes support reads SQLite aggregate evidence, not JSONL.
 
-### Antigravity CLI sessions
+### Gemini (Antigravity CLI) sessions
+
+The dashboard labels Antigravity CLI usage **Gemini**, as it labels Claude Code
+and Codex CLI usage by their model families.
 
 Token Meter reads completed model-response metadata from
 `~/.gemini/antigravity-cli/brain/*/.system_generated/logs/transcript.jsonl`.
@@ -478,8 +481,14 @@ and tool payloads. Antigravity storage is read-only; deleting sessions through
 Token Meter is disabled. Input, output and cache-read counts are recorded per
 completed step and summed once. Missing counters remain unavailable. The totals
 cover exported model-response steps; hidden/background work may not be exported.
-Dollar costs, cache-write counts, a separate thinking-token total, context
-pressure and execution speed remain unavailable.
+Steps with a recorded Gemini model get an estimated cost at the Gemini API
+Standard-tier list price ([Gemini API pricing](https://ai.google.dev/gemini-api/docs/pricing));
+`gemini-4-argon` is $2 input, $10 output and $0.10 cache-read per 1M tokens
+through 2026-11-30, then $4, $20 and $0.20. Reasoning-effort suffixes such as
+`-high` do not change the rate. Steps under `unknown-model` stay unpriced, so a
+session with any such step shows cost as unavailable rather than a partial
+total. Cache-write counts, a separate thinking-token total, context pressure and
+execution speed remain unavailable.
 
 Existing transcripts do not record model identity, so historical usage appears
 under `unknown-model`. To record model attribution for future invocations, add
