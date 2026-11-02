@@ -214,14 +214,14 @@ class AntigravityRuntimeAdapter:
     def _parsed(self, path):
         path = Path(path)
         if not self._owned(path) or not path.is_file():
-            raise ValueError('Gemini session is unavailable')
+            return (), ('source_unavailable',)
         warnings = set()
         steps = {}
         boundaries = self._boundaries(path.parents[2].name)
         boundary_steps = tuple(start for start, end, model in boundaries)
-        if path.stat().st_size > MAX_JSON_BYTES:
-            return (), ('source_limit',)
         try:
+            if path.stat().st_size > MAX_JSON_BYTES:
+                return (), ('source_limit',)
             with path.open('rb') as stream:
                 consumed = 0
                 rows = 0
@@ -263,7 +263,7 @@ class AntigravityRuntimeAdapter:
                         'model': model, **{key: _integer(row.get(key)) for key in
                         ('input_tokens', 'output_tokens', 'cache_read_tokens')}}
         except OSError:
-            raise ValueError('Gemini session is unavailable') from None
+            return (), ('source_unavailable',)
         if not steps:
             warnings.add('usage_unavailable')
         if any(row['model'] == UNKNOWN_MODEL for row in steps.values()):

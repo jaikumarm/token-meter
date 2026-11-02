@@ -12,6 +12,7 @@ from unittest import mock
 import meter
 from token_meter.contracts import DetailLevel, DiscoveryContext, EvidenceBasis
 from token_meter.runtimes.antigravity import AntigravityRuntimeAdapter, record_model
+from token_meter.runtimes.registry import RuntimeRegistry
 
 
 SESSION = '11111111-2222-4333-8444-555555555555'
@@ -191,12 +192,68 @@ class AntigravityAdapterTests(unittest.TestCase):
         self.path.symlink_to(self.path.with_name('outside.jsonl'))
         self.assertEqual(self.adapter.discover(self.context), ())
 
-    def test_missing_file_after_discovery_fails_without_private_error(self):
+    def test_missing_file_after_discovery_is_skipped_with_warning(self):
         self.write(step())
         source = self.source()
+        legacy = self.adapter.discover_legacy(self.context)[0]
         self.path.unlink()
-        with self.assertRaises(ValueError):
-            self.adapter.load(source, DetailLevel.SUMMARY)
+        output, errors = io.StringIO(), io.StringIO()
+        with redirect_stdout(output), redirect_stderr(errors), \
+                mock.patch.object(meter, 'runtime_registry', return_value=RuntimeRegistry((self.adapter,))), \
+                mock.patch.object(meter, '_summary_cache', {}), \
+                mock.patch.dict(meter._xsess, {'data': None, 'at': 0}), \
+                mock.patch.object(meter, 'capability_inventory', return_value={}), \
+                mock.patch.object(meter, 'budget_settings', return_value={}), \
+                mock.patch.object(meter, 'model_pricing_settings', return_value={}):
+            loaded = self.adapter.load(source, DetailLevel.SUMMARY)
+            summary = meter.session_summary(legacy)
+            state = self.adapter.load(legacy, DetailLevel.FULL)
+            cross = meter.cross_session(sources=[legacy])
+        self.assertEqual(output.getvalue(), '')
+        self.assertEqual(errors.getvalue(), '')
+        self.assertEqual(loaded.turns, ())
+        self.assertIsNone(loaded.usage.input_tokens.value)
+        self.assertIsNone(loaded.usage.cost_usd.value)
+        self.assertEqual([warning.code for warning in loaded.warnings], ['source_unavailable'])
+        for row in (summary, state):
+            self.assertEqual(row['evidence_warnings'], ['source_unavailable'])
+            self.assertEqual(row['turns'], 0)
+            self.assertFalse(row['availability']['tokens'])
+            self.assertFalse(row['availability']['cost'])
+        self.assertEqual(cross['sessions'], [])
+        self.assertEqual(cross['total_sessions'], 0)
+
+    def test_filesystem_races_return_unavailable_warning(self):
+        for operation in ('stat', 'open'):
+            with self.subTest(operation=operation):
+                self.write(step())
+                source = self.source()
+                def vanish_after_check():
+                    self.path.unlink()
+                    return True
+                patch = (mock.patch.object(Path, 'is_file', side_effect=vanish_after_check)
+                         if operation == 'stat' else
+                         mock.patch.object(Path, 'open', side_effect=OSError('PRIVATE')))
+                with patch:
+                    loaded = self.adapter.load(source, DetailLevel.SUMMARY)
+                self.assertEqual(loaded.turns, ())
+                self.assertIsNone(loaded.usage.input_tokens.value)
+                self.assertEqual([warning.code for warning in loaded.warnings], ['source_unavailable'])
+                self.assertNotIn('PRIVATE', repr(loaded))
+
+    def test_symlink_replacement_after_discovery_is_rejected_without_reading(self):
+        self.write(step())
+        source = self.source()
+        outside = Path(self.tmp.name) / 'outside.jsonl'
+        self.path.rename(outside)
+        self.path.symlink_to(outside)
+        self.assertFalse(self.adapter._owned(self.path))
+        self.assertEqual(self.adapter.discover(self.context), ())
+        with mock.patch.object(Path, 'open', side_effect=AssertionError('rejected source opened')):
+            loaded = self.adapter.load(source, DetailLevel.SUMMARY)
+        self.assertEqual(loaded.turns, ())
+        self.assertIsNone(loaded.usage.input_tokens.value)
+        self.assertEqual([warning.code for warning in loaded.warnings], ['source_unavailable'])
 
     def test_capture_persists_only_allowlisted_metadata_and_is_idempotent(self):
         self.write(step())
