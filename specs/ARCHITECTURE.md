@@ -594,11 +594,15 @@ projections carry labels and reason codes only; `/work` and session tags are
 allowlisted aggregates and enums.
 
 Every HTTP route, including the dashboard page, `/state`, `/health`, `/menubar`,
-and the local API (`/api/v1/*`, see [Local API](LOCAL-API.md)), accepts only a
+and the local API (`/api/v1/*`, see [Local API](LOCAL-API.md)), with the default
+loopback bind accepts only a
 `Host` of `127.0.0.1:<port>` or `localhost:<port>` for the port the server is
 bound to, which blocks DNS rebinding. A port-forward or a custom
 `TOKEN_METER_URL` that sends another host name gets 403. The local API also
-requires loopback `Origin`s and authenticates with a stable bearer token stored in `~/.token-meter/api-token`
+requires loopback `Origin`s with that default bind. Non-loopback
+`TOKEN_METER_HOST` binding uses the [LAN Host and Origin allowlist](USER_GUIDE.md#lan-access),
+retaining DNS-rebinding protection and the same token requirements. The API
+authenticates with a stable bearer token stored in `~/.token-meter/api-token`
 (mode `0600`, atomic writes, rotatable) or the dashboard's per-process action
 token. The token is never included in any payload, log, or error. Discount rules
 store only enums, numbers, dates, a ≤60-character label, a ≤64-character

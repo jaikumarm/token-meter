@@ -28,9 +28,13 @@ sensitive information.
 ## Security Model
 
 Token Meter binds to `127.0.0.1` by default. Explicit `TOKEN_METER_HOST`
-configuration can expose the dashboard to a trusted LAN; see the
-[LAN setup](USER_GUIDE.md#lan-access). LAN clients can read dashboard data and
-use actions: action tokens are cross-origin protection, not authentication.
+configuration enables trusted LAN access by IPv4 address, machine hostname,
+or an explicitly allowed name; see the [LAN setup](USER_GUIDE.md#lan-access).
+Host checks retain DNS-rebinding protection by rejecting unapproved domain names.
+API and dashboard writes require a same-origin or loopback Origin when present
+and their existing tokens. Reachable clients can read dashboard data and obtain
+action tokens: these checks prevent browser cross-origin access, not
+network-client authentication.
 There is no built-in login or TLS.
 It should not expose the dashboard to public networks. The project should not
 send logs, prompts, responses, project paths, token counts, or costs to external

@@ -235,8 +235,8 @@ returns allowlisted structure and numbers, not raw trace content. See the
 
 ## Privacy
 
-- The dashboard binds to `127.0.0.1` by default. Optional LAN access exposes the dashboard and actions without authentication or TLS; do not expose it publicly.
-- Token Meter does not upload traces, prompts, responses, paths, or analytics. With LAN access enabled, reachable devices can read dashboard data.
+- The dashboard binds to `127.0.0.1` by default. Optional LAN access retains DNS-rebinding and cross-origin protection, but provides no login or TLS; do not expose it publicly.
+- Token Meter does not upload traces, prompts, responses, paths, or analytics. With LAN access enabled, reachable devices can read dashboard data and use its actions.
 - The MCP returns derived numbers only. Agents you connect may send them to their model provider.
 - Costs are estimates. Codex uses public API rates, which can differ from subscription billing.
 - Work insights, when on, send typed prompts, the end of the reply before each one, and

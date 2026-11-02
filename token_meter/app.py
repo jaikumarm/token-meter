@@ -25,6 +25,7 @@ import functools
 import glob
 import hashlib
 import html
+import ipaddress
 import json
 import math
 import multiprocessing
@@ -38,6 +39,7 @@ import selectors
 import shlex
 import shutil
 import sqlite3
+import socket
 import stat
 import subprocess
 import statistics
@@ -13193,12 +13195,15 @@ class H(BaseHTTPRequestHandler):
     def _json(self, payload, status=200):
         self._send(json.dumps(payload), "application/json", status=status)
 
-    def _host_allowed(self):
-        """Every route requires an exact loopback Host for the port this server owns.
+    def _lan_bind_host(self):
+        try:
+            host = ipaddress.IPv4Address(self.server.server_address[0])
+        except (AttributeError, IndexError, TypeError, ValueError):
+            return None
+        return None if host.is_loopback else str(host)
 
-        This blocks DNS rebinding: a page on another origin that resolves to
-        127.0.0.1 still sends its own host name, so it cannot read local data.
-        """
+    def _host_allowed(self):
+        """Require a trusted authority on this server's port to block DNS rebinding."""
         try:
             port = int(self.server.server_address[1])
         except (AttributeError, IndexError, TypeError, ValueError):
@@ -13206,19 +13211,60 @@ class H(BaseHTTPRequestHandler):
         host = (self.headers.get("Host") or "").strip().lower()
         if host in ("127.0.0.1:{}".format(port), "localhost:{}".format(port)):
             return True
+        bind_host = self._lan_bind_host()
+        if bind_host:
+            try:
+                parsed = urlparse("//" + host)
+                name = parsed.hostname or ""
+                valid_authority = host == "{}:{}".format(name, port)
+                try:
+                    address = str(ipaddress.IPv4Address(name))
+                except ValueError:
+                    address = None
+                if valid_authority and address:
+                    # No portable stdlib interface enumeration; literals cannot DNS-rebind.
+                    if bind_host == "0.0.0.0" or address == bind_host:
+                        return True
+                elif valid_authority and name:
+                    hostname = socket.gethostname().lower()
+                    names = {hostname, hostname.split(".")[0], socket.getfqdn().lower()}
+                    names.update(value.strip().lower() for value in
+                                 os.environ.get("TOKEN_METER_ALLOWED_HOSTS", "").split(","))
+                    if name in names:
+                        return True
+            except (OSError, ValueError):
+                pass
         self._json({"ok": False, "error": "Forbidden."}, 403)
         return False
 
+    def _origin_allowed(self):
+        origin = self.headers.get("Origin") or ""
+        if not origin:
+            return True
+        if not self._lan_bind_host():
+            return (urlparse(origin).hostname or "") in ("localhost", "127.0.0.1", "::1")
+        try:
+            parsed = urlparse(origin)
+            if (parsed.hostname or "") in ("localhost", "127.0.0.1", "::1"):
+                return True
+            host = urlparse("//" + (self.headers.get("Host") or "").strip())
+            return (parsed.scheme == "http" and parsed.username is None
+                    and parsed.password is None and not parsed.path
+                    and not parsed.query and not parsed.fragment
+                    and parsed.hostname == host.hostname
+                    and (parsed.port or 80) == host.port)
+        except ValueError:
+            return False
+
     def _local_api_allowed(self):
-        """Gate the local API: exact loopback Host, loopback Origin, then a token.
+        """Gate the local API: trusted Host, same-origin or loopback Origin, then a token.
 
         The Host check blocks DNS rebinding; tokens are the API token (Bearer) or
         the dashboard's per-process action token. Sends the refusal itself.
         """
         if not self._host_allowed():
             return False
-        origin = self.headers.get("Origin") or ""
-        if origin and (urlparse(origin).hostname or "") not in ("localhost", "127.0.0.1", "::1"):
+        if not self._origin_allowed():
             self._json({"ok": False, "error": "Forbidden."}, 403)
             return False
         authorization = self.headers.get("Authorization") or ""
@@ -13319,11 +13365,7 @@ class H(BaseHTTPRequestHandler):
                             "/goals", "/settings/cost-discounts"):
             self.send_error(404)
             return
-        origin = self.headers.get("Origin") or ""
-        if (origin
-                and (urlparse(origin).hostname or "") not in ("localhost", "127.0.0.1", "::1")
-                # The accepted socket has the actual destination IP even with a wildcard bind.
-                and origin != "http://{}:{}".format(*self.connection.getsockname()[:2])):
+        if not self._origin_allowed():
             self._send(json.dumps({"ok": False, "error": "Local dashboard origin required."}),
                        "application/json", status=403)
             return

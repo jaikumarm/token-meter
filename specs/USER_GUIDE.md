@@ -110,11 +110,26 @@ on all IPv4 interfaces, including localhost. For a foreground run:
 TOKEN_METER_HOST=0.0.0.0 python3 meter.py
 ```
 
-Open `http://<server-LAN-IP>:8722/` from another device. `0.0.0.0` is a bind
-address, not a browser destination. A specific local IPv4 address is also
-accepted; binding only that address disables localhost access and can break
-the installer health checks and native companion, so installed users should
-use `0.0.0.0` for LAN access. Hostnames and IPv6 binds are not supported.
+Open `http://<server-LAN-IP>:8722/` or `http://jay-ml-srv:8722/` (using your
+server's hostname) from another device. `0.0.0.0` is a bind address, not a browser
+destination. A specific local IPv4 address is also accepted, but binding only that
+address can break localhost health checks and the native companion. Hostname and
+IPv6 **binds** are unsupported.
+
+With a non-loopback bind, accepted HTTP Host names are the bound IPv4 address
+(or any IPv4 literal for `0.0.0.0`), the machine hostname, its short form or FQDN,
+and names in the optional comma-separated `TOKEN_METER_ALLOWED_HOSTS` environment
+variable (for example, `meter.lan,meter.home`). Names are case-insensitive and the
+Host port must equal the server port. Portable stdlib code cannot enumerate all
+interface addresses reliably, so wildcard binding accepts IPv4 literals; these
+use no DNS lookup and cannot perform DNS rebinding. Unapproved domain names are
+still rejected. With the default loopback bind, the existing loopback-only Host
+and Origin rules are unchanged and the additional allowed names are ignored.
+
+For API and dashboard writes in LAN mode, an Origin header, when present, must
+be the same HTTP hostname and port as the accepted Host, or a loopback origin.
+The dashboard uses its existing action token; the API still requires a Bearer
+API token or dashboard action token.
 
 For an installed Linux server, run `systemctl --user edit token-meter-server.service`
 and add this override:
@@ -136,14 +151,11 @@ service. On macOS or Windows, configure the environment of the LaunchAgent or
 server launcher, respectively, and restart that server. To restore local-only
 access, remove the override or set `TOKEN_METER_HOST=127.0.0.1`, then restart.
 
-LAN mode has **no login or encryption**. Any device that can reach the port can
-read dashboard data and use its actions; action tokens prevent cross-origin
-requests, not access by other network users. `0.0.0.0` includes Wi-Fi, Ethernet,
-and VPN interfaces. Restrict access with your host firewall to trusted devices;
-do not forward port 8722 to the internet. HTTPS, authentication, and reverse
-proxy/domain-name deployments are outside this mode. Browser actions support
-localhost and the server's directly connected IP address; alternate hostname
-origins are rejected.
+Binding all interfaces has **no login or encryption**. Host checks prevent DNS
+rebinding; they do not authenticate network clients. Reachable clients can read
+dashboard data and use its actions. Action tokens prevent cross-origin requests.
+Keep the default loopback bind where possible; restrict any wider listener with
+your host firewall and never forward port 8722 to the internet.
 
 ## Daily Workflows
 

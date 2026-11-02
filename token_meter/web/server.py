@@ -13,7 +13,7 @@ def serve_local(*, handler_class, server_class, port, background=(), output=prin
             threading.Thread(target=target, daemon=True).start()
         output("Token Meter live -> http://{}:{}".format(host, port))
         if host == "0.0.0.0":
-            output("All IPv4 interfaces; open localhost or this machine's LAN IP. "
+            output("All IPv4 interfaces; open this machine's LAN IP or hostname. DNS-rebinding protection remains enabled. "
                    "No authentication or TLS; use a trusted network only.")
         try:
             server.serve_forever()

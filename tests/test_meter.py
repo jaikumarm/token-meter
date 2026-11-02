@@ -2001,6 +2001,7 @@ class SourceDiscoveryCacheTests(unittest.TestCase):
             empty_summary_cache = {}
             with mock.patch.object(meter, "CODEX_SESSIONS", str(sessions)), \
                     mock.patch.object(meter, "CODEX_INDEX", str(index)), \
+                    mock.patch.object(meter, "ANTIGRAVITY_DATA_DIR", str(root / "no-antigravity")), \
                     mock.patch.object(meter, "CLAUDE_PROJECTS", str(root / "no-claude")), \
                     mock.patch.object(meter, "CURSOR_PROJECTS", str(root / "no-cursor")), \
                     mock.patch.object(meter, "OPENCODE_DB", str(root / "no-opencode.db")), \
