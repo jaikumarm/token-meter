@@ -1300,6 +1300,50 @@ class ClaudeDiscoveryCacheTests(unittest.TestCase):
         self.assertEqual(len(self.adapter._message_id_cache), self.COUNT - 100)
         self.assertEqual(set(self.adapter._activity_cache), live)
 
+    def test_lineage_cache_copies_strings_and_reuses_and_evicts_entries(self):
+        source = {"path": str(self.traces[0])}
+        # Decode separately so the ownership check uses parser allocations.
+        rows = json.loads(json.dumps([
+            {**assistant("message-paid", claude_usage(input_tokens=1)),
+             "sessionId": "session-original", "uuid": "row-paid"},
+            {**assistant("message-unpaid", claude_usage()),
+             "sessionId": "session-copy", "uuid": "row-unpaid"},
+            {**assistant("message-paid", claude_usage()),
+             "sessionId": "session-copy", "uuid": "row-zeroed"},
+        ]))
+        original_ids = {row["message"]["id"]: row["message"]["id"] for row in rows}
+        original_sessions = {row["sessionId"]: row["sessionId"] for row in rows}
+        expected_ts = {
+            message["id"]: float(message["ts"])
+            for message in self.adapter.logical_messages(rows)
+        }
+        with mock.patch.object(
+            self.adapter, "load_rows", return_value=(rows, 0, True),
+        ) as load:
+            lineage = self.adapter._record_lineage(source)
+            self.assertEqual(lineage, (
+                frozenset(original_ids), frozenset(original_sessions), expected_ts,
+                frozenset({"uuid:row-paid", "message:message-paid"}),
+                frozenset({"uuid:row-unpaid", "message:message-unpaid", "uuid:row-zeroed"}),
+            ))
+            for cached in (lineage[0], lineage[2]):
+                for value in cached:
+                    self.assertIsNot(value, original_ids[value])
+            for value in lineage[1]:
+                self.assertIsNot(value, original_sessions[value])
+            self.assertIs(self.adapter._record_lineage(source), lineage)
+            load.assert_called_once()
+
+        self.adapter._canonical_records([])
+        self.assertEqual(self.adapter._message_id_cache, {})
+
+    def test_empty_lineage_cache(self):
+        source = {"path": str(self.traces[0])}
+        with mock.patch.object(self.adapter, "load_rows", return_value=([], 0, True)):
+            self.assertEqual(self.adapter._record_lineage(source), (
+                frozenset(), frozenset(), {}, frozenset(), frozenset(),
+            ))
+
 
 class ClaudeDurationProjectionTests(unittest.TestCase):
     def test_duration_counts_are_allowlisted_without_source_locator(self):

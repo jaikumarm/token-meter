@@ -749,9 +749,14 @@ class ClaudeRuntimeAdapter:
                 keys.add("message:" + str(message["id"]))
         # A message billed by any of its rows here is not a zeroed copy.
         unpaid -= {key for key in paid if key.startswith("message:")}
+        # Free parsed rows before copying strings so the cache cannot pin their arenas.
+        rows = row = message = usage = None
+        message_ts = {"".join((key, "")): timestamp for key, timestamp in message_ts.items()}
         lineage = (
-            frozenset(message_ts), row_sessions, message_ts,
-            frozenset(paid), frozenset(unpaid),
+            frozenset(message_ts),
+            frozenset("".join((key, "")) for key in row_sessions), message_ts,
+            frozenset("".join((key, "")) for key in paid),
+            frozenset("".join((key, "")) for key in unpaid),
         )
         self._message_id_cache[cache_key] = (signature, lineage)
         return lineage
