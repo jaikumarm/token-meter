@@ -18,9 +18,12 @@ from token_meter.contracts import (
     SourceLocator, SourceRevision, TimingEvidence, TurnSummary, UsageEvidence,
 )
 
-MAX_JSON_BYTES = 32 * 1024 * 1024
+# Long-lived conversations pass 10k steps and 30 MB; parsing streams and keeps only
+# allowlisted per-step scalars, so these bound pathological files, not normal use.
+MAX_JSON_BYTES = 1024 * 1024 * 1024
 MAX_LINE_BYTES = 1024 * 1024
-MAX_STEPS = 10_000
+MAX_STEPS = 1_000_000
+MAX_METADATA_FILES = 100_000
 MAX_SOURCES = 2_000
 UNKNOWN_MODEL = 'unknown-model'
 # shortcut: exported history has no model names; remove the hook if upstream records them.
@@ -135,7 +138,7 @@ class AntigravityRuntimeAdapter:
             return ()
         boundaries = []
         try:
-            paths = islice(directory.glob('*.json'), MAX_STEPS)
+            paths = islice(directory.glob('*.json'), MAX_METADATA_FILES)
             for path in paths:
                 if path.is_symlink() or path.stat().st_size > 512:
                     continue

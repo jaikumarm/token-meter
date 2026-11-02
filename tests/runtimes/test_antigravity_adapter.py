@@ -274,6 +274,18 @@ class AntigravityAdapterTests(unittest.TestCase):
                 self.capture(1, 'gemini-3.8-pro', **changes)
         self.assertFalse(self.metadata.exists())
 
+    def test_long_conversations_past_ten_thousand_steps_count_and_capture(self):
+        self.write(step(9_999), step(14_523), step(14_525))
+        self.capture(14_523, 'gemini-4-argon-medium')
+        source = self.adapter.discover_legacy(self.context)[0]
+        summary = self.adapter.summarize_legacy(source)
+        models = {row['model']: row for row in summary['model_stats']}
+        self.assertEqual(set(models), {'unknown-model', 'gemini-4-argon-medium'})
+        self.assertEqual(models['gemini-4-argon-medium']['tokens'], 640)
+        self.assertEqual(models['unknown-model']['tokens'], 320)
+        with self.assertRaises(ValueError):
+            self.capture(1_000_000, 'gemini-4-argon-medium')
+
     def test_capture_never_attributes_later_steps_after_hook_stops(self):
         self.write(step())
         self.capture(0, 'gemini-3.8-pro')
